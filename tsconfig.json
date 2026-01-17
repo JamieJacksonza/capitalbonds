@@ -43,6 +43,8 @@
     "node_modules",
     "_bak",
     "_backups",
+    "_disabled_routes_20260103_183753",
+    "_disabled_routes_20260103_183753/**",
     "**/*.bak",
     "**/*.bak/**"
   ]
