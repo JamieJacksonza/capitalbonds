@@ -243,14 +243,8 @@ export default function ConsultantPie({ deals }: { deals: Deal[] }) {
         </div>
       ) : (
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <div  
-    $m = $args[0].Groups[1].Value
-    if ($m -match '\bmin-w-0\b') { 'className="' + $m + '"' } else { 'className="' + $m + ' min-w-0"' }
-  >
-            
-    $tag = $args[0].Value
-    if ($tag -match 'minWidth=\{0\}') { $tag } else { $tag -replace '>', ' minWidth={0}>' }
-  
+          <div className="min-w-0">
+            <ResponsiveContainer width="100%" height={320}>
               <PieChart>
                 <Tooltip
                   formatter={(value: any, name: any) => [money(Number(value) || 0), String(name)]}
