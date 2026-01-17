@@ -45,6 +45,8 @@
     "_backups",
     "_disabled_routes_20260103_183753",
     "_disabled_routes_20260103_183753/**",
+    "_rollback_snapshots",
+    "_rollback_snapshots/**",
     "**/*.bak",
     "**/*.bak/**"
   ]
