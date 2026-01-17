@@ -78,7 +78,7 @@ export default function StageInputsCompact({
 
   const aipCaptured =
     bankList.length > 0 &&
-    bankList.some((b) => has(b?.bank_name) || has(b?.bank_notes) || has(b?.attorney) || has(b?.attorney_note));
+    bankList.some((b: AnyObj) => has(b?.bank_name) || has(b?.bank_notes) || has(b?.attorney) || has(b?.attorney_note));
 
   const instructedCaptured = has(instructedAttorney) || has(valuationDate);
   const grantedCaptured = has(grantedDate) || has(grantedConditions);
@@ -104,7 +104,7 @@ export default function StageInputsCompact({
         <StageCard title="AIP" captured={aipCaptured}>
           {bankList.length ? (
             <div className="space-y-3">
-              {bankList.slice(0, 4).map((b, idx) => (
+              {bankList.slice(0, 4).map((b: AnyObj, idx: number) => (
                 <div key={String(b?.id || idx)} className="rounded-2xl border border-black/10 p-3">
                   <div className="text-[11px] font-extrabold text-black">{String(b?.bank_name || "Bank")}</div>
                   <Row label="Bank notes" value={b?.bank_notes} />

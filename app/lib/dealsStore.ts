@@ -141,11 +141,6 @@ export async function createDeal(payload: any) {
       if (typeof window !== "undefined" && res.ok) {
         const __dest =
           (typeof payload !== "undefined" ? (payload?.to_stage ?? payload?.toStage ?? payload?.stage ?? null) : null) ??
-          (typeof body !== "undefined" ? (body?.to_stage ?? body?.toStage ?? body?.stage ?? null) : null) ??
-          (typeof toStage !== "undefined" ? toStage : null) ??
-          (typeof nextStage !== "undefined" ? nextStage : null) ??
-          (typeof targetStage !== "undefined" ? targetStage : null) ??
-          (typeof moveToStage !== "undefined" ? moveToStage : null) ??
           null;
 
         if (__dest) {

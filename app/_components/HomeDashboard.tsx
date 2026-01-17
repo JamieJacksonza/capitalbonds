@@ -600,20 +600,20 @@ export default function HomeDashboard() {
 
 {/* Value per Consultant (All Stages) */}
 
-{/* Consultant Performance Score (0�100) */}
+{/* Consultant Performance Score (0-100) */}
 <div className="mt-8">
   <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <div className="text-sm font-extrabold text-black">Consultant Performance Score (0�100)</div>
+        <div className="text-sm font-extrabold text-black">Consultant Performance Score (0-100)</div>
         <div className="mt-1 text-xs font-semibold text-black/60">
           Weighted by stage progress, value, and speed (NTU penalized).
         </div>
         <div className="mt-2 text-[11px] font-semibold text-black/60">
-          DealScore = StagePoints � ln(value + 1) � (1 / (1 + ageDays/14))
+          DealScore = StagePoints * ln(value + 1) * (1 / (1 + ageDays/14))
         </div>
         <div className="mt-1 text-[11px] font-semibold text-black/50">
-          Score = (ConsultantRawScore / MaxRawScore) � 100
+          Score = (ConsultantRawScore / MaxRawScore) * 100
         </div>
       </div>
     </div>

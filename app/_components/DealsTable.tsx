@@ -63,7 +63,7 @@ export default function DealsTable({
                   <Pill text={d.status} />
                 </td>
                 <td className="hidden px-4 py-3 text-black lg:table-cell">
-                  {d.notes ? d.notes : "â€”"}
+                  {d.notes ? d.notes : "-"}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center justify-end gap-2">

@@ -48,7 +48,12 @@ export default function ConsultantPage() {
       ntu: 0,
       registrations: 0,
     };
-    for (const d of consultantDeals) map[d.stage] = (map[d.stage] || 0) + 1;
+    for (const d of consultantDeals) {
+      const stage = d.stage as Stage;
+      if (stage && stage in map) {
+        map[stage] = (map[stage] || 0) + 1;
+      }
+    }
     return map;
   }, [consultantDeals]);
 
@@ -288,11 +293,11 @@ export default function ConsultantPage() {
                       {money(Number(d.amount) || 0)}
                     </td>
                     <td className="px-4 py-3 text-sm font-extrabold text-black">
-                      {stageMeta[d.stage].title}
+                      {stageMeta[d.stage as Stage]?.title || "-"}
                     </td>
                     <td className="px-4 py-3 text-sm font-semibold text-black/80">{d.submitted}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-black/80">
-                      {d.grantedAt || "Ã¢â‚¬â€"}
+                      {d.grantedAt || "-"}
                     </td>
                     <td className="px-4 py-3 text-sm font-semibold text-black/80">{d.status}</td>
 
@@ -308,7 +313,7 @@ export default function ConsultantPage() {
                         className="w-[170px] rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black outline-none focus:border-black/30"
                       >
                         <option value="" disabled>
-                          MoveÃ¢â‚¬Â¦
+                          Move...
                         </option>
                         {STAGES.filter((s) => s !== d.stage).map((s) => (
                           <option key={s} value={s}>
@@ -325,7 +330,7 @@ export default function ConsultantPage() {
         </div>
 
         <div className="text-xs font-bold text-black/60">
-          Tip: Clicking the deal ID opens the deal view. Ã¢â‚¬Å“MoveÃ¢â‚¬Â¦Ã¢â‚¬Â logs who moved it.
+          Tip: Clicking the deal ID opens the deal view. "Move..." logs who moved it.
         </div>
       </section>
     </div>
