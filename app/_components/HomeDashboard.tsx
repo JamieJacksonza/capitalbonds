@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useMemo, useState } from "react";
-import { useDeals, Stage } from "./useDeals";
+import { useDeals } from "./useDeals";
 import AgentSummaryTable from "./AgentSummaryTable";
 import AttorneySummaryTable from "./AttorneySummaryTable";
 import ConsultantPipelinePerformance from "./ConsultantPipelinePerformance";
@@ -39,6 +39,7 @@ function colorForConsultant(name: any) {
   const hue = hashStr(key) % 360;
   return `hsl(${hue}, 85%, 45%)`;
 }
+type Stage = "instructed" | "granted" | "aip" | "submitted" | "ntu" | "registrations";
 const STAGES: Stage[] = ["instructed","granted","aip","submitted","ntu","registrations"];
 
 function stageLabel(s: Stage) {
