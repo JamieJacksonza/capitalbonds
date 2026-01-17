@@ -4,7 +4,10 @@ import Link from "next/link";
 
 import MoveDealInline from "./MoveDealInline";
 import { useMemo, useState } from "react";
-import useDeals, { type Deal, type Stage } from "@/app/_components/useDeals";
+import { useDeals } from "@/app/_components/useDeals";
+
+type Deal = any;
+type Stage = "submitted" | "aip" | "instructed" | "granted" | "ntu";
 
 const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu"];
 const stageTitle: Record<Stage, string> = {
