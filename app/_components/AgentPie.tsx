@@ -96,14 +96,8 @@ export default function AgentPie() {
         <div className="mt-5 text-sm font-semibold text-black/70">No granted deals yet.</div>
       ) : (
         <div className="mt-5">
-          <div  
-    $m = $args[0].Groups[1].Value
-    if ($m -match '\bmin-w-0\b') { 'className="' + $m + '"' } else { 'className="' + $m + ' min-w-0"' }
-  >
-            
-    $tag = $args[0].Value
-    if ($tag -match 'minWidth=\{0\}') { $tag } else { $tag -replace '>', ' minWidth={0}>' }
-  
+          <div className="min-w-0">
+            <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Tooltip
                   formatter={(v: any) => moneyZar(Number(v || 0))}
