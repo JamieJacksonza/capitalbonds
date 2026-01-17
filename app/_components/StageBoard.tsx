@@ -117,7 +117,6 @@ export default function StageBoard() {
       await moveDealToStage(targetDeal.id, toStage, {
         movedBy,
         note: generalNote.trim(),
-        bankNotes: [], // disabled (deadline mode),
       });
 
       setMsg({ type: "ok", text: `Moved to ${stageTitle[toStage]} (by ${movedBy})` });
