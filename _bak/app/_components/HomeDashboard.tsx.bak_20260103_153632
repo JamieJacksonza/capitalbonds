@@ -1,0 +1,500 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useDeals, Stage } from "./useDeals";
+
+function getAmount(d: any): number {
+  const raw = d?.amount ?? d?.amount_zar ?? d?.amountZar ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatZar(n: number) {
+  const v = Number(n || 0);
+  if (!Number.isFinite(v) || v <= 0) return "R 0";
+  return `R ${v.toLocaleString("en-ZA")}`;
+}
+
+function stageLabel(s: Stage) {
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  return "NTU";
+}
+
+const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "registrations", "ntu"];
+
+/** Distinct palette (high-contrast, looks good on white) */
+const PALETTE = [
+  "#2563EB", "#DC2626", "#16A34A", "#F97316", "#7C3AED",
+  "#0EA5E9", "#DB2777", "#84CC16", "#EA580C", "#06B6D4",
+  "#A855F7", "#F59E0B", "#10B981", "#EF4444", "#3B82F6",
+  "#22C55E", "#E11D48", "#6366F1", "#14B8A6", "#9333EA",
+  "#0F766E", "#B45309", "#BE123C", "#1D4ED8", "#166534",
+];
+
+/** Stable color per consultant (hash -> palette index) */
+function hashToIndex(input: string, mod: number) {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h << 5) - h + input.charCodeAt(i);
+    h |= 0;
+  }
+  const idx = Math.abs(h) % mod;
+  return idx;
+}
+
+function colorForKey(key: string) {
+  const k = String(key || "Unknown");
+  return PALETTE[hashToIndex(k, PALETTE.length)];
+}
+
+/** Donut geometry helpers */
+function polar(cx: number, cy: number, r: number, angle: number) {
+  const a = (angle - 90) * (Math.PI / 180);
+  return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+}
+
+/** Donut segment path */
+function donutPath(cx: number, cy: number, rOuter: number, rInner: number, startAngle: number, endAngle: number) {
+  const startOuter = polar(cx, cy, rOuter, endAngle);
+  const endOuter = polar(cx, cy, rOuter, startAngle);
+
+  const startInner = polar(cx, cy, rInner, startAngle);
+  const endInner = polar(cx, cy, rInner, endAngle);
+
+  const large = endAngle - startAngle > 180 ? 1 : 0;
+
+  return [
+    `M ${startOuter.x} ${startOuter.y}`,
+    `A ${rOuter} ${rOuter} 0 ${large} 0 ${endOuter.x} ${endOuter.y}`,
+    `L ${startInner.x} ${startInner.y}`,
+    `A ${rInner} ${rInner} 0 ${large} 1 ${endInner.x} ${endInner.y}`,
+    "Z",
+  ].join(" ");
+}
+
+type Slice = { label: string; key: string; value: number; color: string };
+
+function DonutChart({
+  title,
+  totalLabel,
+  slices,
+}: {
+  title: string;
+  totalLabel: string;
+  slices: Slice[];
+}) {
+  const [hoverKey, setHoverKey] = useState<string>("");
+
+  const clean = (slices || []).filter((s) => Number.isFinite(s.value) && s.value > 0);
+  const total = clean.reduce((sum, s) => sum + s.value, 0);
+
+  // Chart size
+  const size = 260;
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = 108;
+  const rInner = 72;
+
+  // Tooltip slice
+  const hover = clean.find((s) => s.key === hoverKey);
+
+  let acc = 0;
+
+  return (
+    <div className="relative">
+      <div className="mb-4">
+        <div className="text-sm font-extrabold text-black">{title}</div>
+        <div className="text-xs text-black/60">{totalLabel}</div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6">
+        {/* Donut */}
+        <div className="relative flex items-center justify-center">
+          <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="drop-shadow-sm">
+            {/* background ring */}
+            <circle cx={cx} cy={cy} r={rOuter} fill="#F3F4F6" />
+            <circle cx={cx} cy={cy} r={rInner} fill="white" />
+
+            {/* slices */}
+            {clean.map((s) => {
+              const start = total === 0 ? 0 : (acc / total) * 360;
+              acc += s.value;
+              const end = total === 0 ? 0 : (acc / total) * 360;
+
+              const isHover = hoverKey && hoverKey === s.key;
+              const d = donutPath(cx, cy, isHover ? rOuter + 4 : rOuter, rInner, start, end);
+
+              const pct = total > 0 ? (s.value / total) * 100 : 0;
+
+              return (
+                <path
+                  key={s.key}
+                  d={d}
+                  fill={s.color}
+                  stroke="#FFFFFF"
+                  strokeWidth="2"
+                  style={{ cursor: "pointer", transition: "all 120ms ease" }}
+                  onMouseEnter={() => setHoverKey(s.key)}
+                  onMouseLeave={() => setHoverKey("")}
+                  aria-label={`${s.label} ${formatZar(s.value)} (${pct.toFixed(1)}%)`}
+                />
+              );
+            })}
+
+            {/* center labels */}
+            <text x={cx} y={cy - 8} textAnchor="middle" className="fill-black" style={{ fontSize: 12, fontWeight: 900 }}>
+              {title}
+            </text>
+            <text x={cx} y={cy + 16} textAnchor="middle" className="fill-black" style={{ fontSize: 16, fontWeight: 900 }}>
+              {formatZar(total)}
+            </text>
+          </svg>
+
+          {/* tooltip */}
+          {hover ? (
+            <div className="absolute -bottom-2 left-1/2 w-[280px] -translate-x-1/2 rounded-2xl border border-black/10 bg-white p-4 shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: hover.color }} />
+                  <div className="text-sm font-extrabold text-black">{hover.label}</div>
+                </div>
+                <div className="text-sm font-extrabold text-black">{formatZar(hover.value)}</div>
+              </div>
+              <div className="mt-2 text-xs text-black/60">
+                Share of total:{" "}
+                <span className="font-extrabold text-black">
+                  {total > 0 ? ((hover.value / total) * 100).toFixed(1) : "0.0"}%
+                </span>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* legend */}
+        <div className="rounded-2xl border border-black/10 bg-white p-5">
+          <div className="mb-3 text-sm font-extrabold text-black">Legend</div>
+
+          <div className="max-h-[260px] overflow-auto pr-2">
+            {clean.length === 0 ? (
+              <div className="text-sm text-black/60">No data yet.</div>
+            ) : (
+              clean.map((s) => {
+                const pct = total > 0 ? (s.value / total) * 100 : 0;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onMouseEnter={() => setHoverKey(s.key)}
+                    onMouseLeave={() => setHoverKey("")}
+                    className="mb-2 flex w-full items-center justify-between rounded-xl border border-black/5 bg-white px-3 py-2 text-left hover:border-black/10 hover:bg-black/[0.02]"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                      <span className="text-sm font-semibold text-black">{s.label}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-black/60">{pct.toFixed(1)}%</span>
+                      <span className="text-sm font-extrabold text-black">{formatZar(s.value)}</span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <div className="mt-4 text-xs text-black/50">Tip: Hover a legend row to highlight the slice.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** -------- DATE FILTER HELPERS (submitted_date preferred) -------- */
+function dealDateKey(d: any): Date | null {
+  const sd = String(d?.submitted_date ?? d?.submittedDate ?? "").trim();
+  if (sd) {
+    const dt = new Date(`${sd}T12:00:00`);
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
+  const ca = String(d?.created_at ?? d?.createdAt ?? "").trim();
+  if (ca) {
+    const dt = new Date(ca);
+    if (!Number.isNaN(dt.getTime())) return dt;
+  }
+
+  return null;
+}
+
+function inRange(dt: Date | null, from: string, to: string) {
+  if (!dt) return true;
+
+  const fromDt = from ? new Date(`${from}T00:00:00`) : null;
+  const toDt = to ? new Date(`${to}T23:59:59`) : null;
+
+  if (fromDt && !Number.isNaN(fromDt.getTime()) && dt < fromDt) return false;
+  if (toDt && !Number.isNaN(toDt.getTime()) && dt > toDt) return false;
+
+  return true;
+}
+
+export default function HomeDashboard() {
+  const hook = useDeals();
+  const deals = (hook as any)?.deals ?? [];
+  const loading = (hook as any)?.loading ?? false;
+  const error = (hook as any)?.error ?? null;
+  const refreshAll = (hook as any)?.refreshAll;
+
+  const [from, setFrom] = useState<string>("");
+  const [to, setTo] = useState<string>("");
+
+  const filteredDeals = useMemo(() => {
+    const list = Array.isArray(deals) ? deals : [];
+    if (!from && !to) return list;
+    return list.filter((d: any) => inRange(dealDateKey(d), from, to));
+  }, [deals, from, to]);
+
+  // Stage cards (COUNT + TOTAL)  driven by FILTERED deals
+  const stageSummary = useMemo(() => {
+    return STAGES.map((s) => {
+      const list = (filteredDeals || []).filter((d: any) => String(d.stage || "").toLowerCase() === s);
+      const total = list.reduce((sum: number, d: any) => sum + getAmount(d), 0);
+      return {
+        stage: s,
+        label: stageLabel(s),
+        count: list.length,
+        total,
+      };
+    });
+  }, [filteredDeals]);
+
+  // Consultant list (from FILTERED deals)
+  const allConsultants = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of filteredDeals || []) {
+      const c = String((d as any)?.consultant || "").trim();
+      set.add(c || "Unassigned");
+    }
+    return Array.from(set.values()).sort((a, b) => a.localeCompare(b));
+  }, [filteredDeals]);
+
+  const grantedDeals = useMemo(
+    () => (filteredDeals || []).filter((d: any) => String(d.stage || "").toLowerCase() === "granted"),
+    [filteredDeals]
+  );
+
+  const totalGranted = useMemo(() => {
+    return (grantedDeals || []).reduce((sum: number, d: any) => sum + getAmount(d), 0);
+  }, [grantedDeals]);
+
+  const grantedByConsultant = useMemo(() => {
+    const map = new Map<string, { consultant: string; total: number; count: number }>();
+
+    // seed all consultants (so leaderboard keeps stable rows within the filtered set)
+    for (const c of allConsultants) map.set(c, { consultant: c, total: 0, count: 0 });
+
+    for (const d of grantedDeals || []) {
+      const key = String((d as any)?.consultant || "").trim() || "Unassigned";
+      const cur = map.get(key) || { consultant: key, total: 0, count: 0 };
+      cur.total += getAmount(d);
+      cur.count += 1;
+      map.set(key, cur);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [allConsultants, grantedDeals]);
+
+  // Better pie: Top 8 + Other (from FILTERED data)
+  const donutSlices = useMemo(() => {
+    const positive = grantedByConsultant
+      .filter((x) => x.total > 0)
+      .map((x) => ({
+        label: x.consultant,
+        key: x.consultant,
+        value: x.total,
+        color: colorForKey(x.consultant),
+      }));
+
+    if (positive.length <= 8) return positive;
+
+    const top = positive.slice(0, 8);
+    const rest = positive.slice(8);
+    const otherValue = rest.reduce((s, x) => s + x.value, 0);
+
+    return [...top, { label: "Other", key: "__other__", value: otherValue, color: "#111827" }];
+  }, [grantedByConsultant]);
+
+  return (
+    <div className="w-full">
+      <div className="mx-auto max-w-7xl px-7 py-10 md:px-12 lg:px-16">
+        {/* Header + Filter */}
+        <div className="mb-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="text-3xl font-extrabold text-black">Dashboard</div>
+            <div className="mt-2 text-sm text-black/60">Live view from Supabase</div>
+          </div>
+
+          <div className="rounded-2xl border border-black/10 bg-white px-3 py-3 shadow-sm w-fit">
+            <div className="text-[10px] font-extrabold text-black/60">Filter by date</div>
+
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <label className="flex items-center gap-2 text-[11px] font-bold text-black/60">
+                From
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="rounded-xl border border-black/10 px-2.5 py-1.5 text-[11px] font-extrabold text-black outline-none focus:border-black/30"
+                />
+              </label>
+
+              <label className="flex items-center gap-2 text-[11px] font-bold text-black/60">
+                To
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  className="rounded-xl border border-black/10 px-2.5 py-1.5 text-[11px] font-extrabold text-black outline-none focus:border-black/30"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => (typeof refreshAll === "function" ? refreshAll() : null)}
+                className="rounded-2xl bg-black px-3 py-1.5 text-[11px] font-extrabold text-white hover:opacity-90"
+              >
+                Refresh
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFrom("");
+                  setTo("");
+                }}
+                className="rounded-2xl border border-black/10 bg-white px-3 py-1.5 text-[11px] font-extrabold text-black hover:bg-black/[0.03]"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="mt-2 text-[11px] font-bold text-black/50">
+              Showing <span className="font-extrabold text-black/70">{(filteredDeals || []).length}</span> deal(s)
+              {from || to ? " in selected range" : ""}.
+            </div>
+          </div>
+        </div>
+
+        {/* Deal breakdown per category */}
+        <div className="mb-12">
+          <div className="mb-4 text-sm font-extrabold text-black">Deal Breakdown</div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3">
+            {stageSummary.map((s) => (
+              <div key={s.stage} className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+                <div className="flex items-start justify-between gap-6">
+                  <div>
+                    <div className="text-xs font-extrabold text-black/60">{s.label}</div>
+                    <div className="mt-2 text-3xl font-extrabold text-black tabular-nums">{s.count}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs font-extrabold text-black/60">Total</div>
+                    <div className="mt-2 text-lg font-extrabold text-black whitespace-nowrap tabular-nums">{formatZar(s.total)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Granted value per consultant */}
+        <div className="rounded-2xl border border-black/10 bg-white p-8 shadow-sm">
+          <div className="mb-2 text-xl font-extrabold text-black">Granted Value per Consultant</div>
+          <div className="mb-8 text-sm text-black/60">
+            {grantedDeals.length} granted deal(s){" "}
+            Total <span className="font-extrabold text-black">{formatZar(totalGranted)}</span>
+          </div>
+
+          {loading ? (
+            <div className="text-sm text-black/60">Loading</div>
+          ) : error ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-700">
+              {error}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-10 xl:grid-cols-2">
+              {/* Donut */}
+              <div className="rounded-2xl border border-black/10 bg-white p-6">
+                <DonutChart
+                  title="Granted Total"
+                  totalLabel="Top consultants shown as slices (Top 8 + Other)"
+                  slices={donutSlices}
+                />
+              </div>
+
+              {/* Leaderboard */}
+              <div className="rounded-2xl border border-black/10 bg-white p-6">
+                <div className="mb-4 text-sm font-extrabold text-black">Consultant Leaderboard</div>
+
+                <div className="overflow-hidden rounded-2xl border border-black/10">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-black/5">
+                      <tr>
+                        <th className="px-5 py-4 font-extrabold text-black">Consultant</th>
+                        <th className="px-5 py-4 font-extrabold text-black">Granted Deals</th>
+                        <th className="px-5 py-4 text-right font-extrabold text-black">Granted Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {grantedByConsultant.map((row) => {
+                        const pct = totalGranted > 0 ? (row.total / totalGranted) * 100 : 0;
+                        const col = row.total > 0 ? colorForKey(row.consultant) : "#D1D5DB";
+
+                        return (
+                          <tr key={row.consultant} className="border-t border-black/10">
+                            <td className="px-5 py-4 font-semibold text-black">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: col }} />
+                                <span>{row.consultant}</span>
+                              </div>
+
+                              <div className="mt-3 h-2.5 w-full rounded-full bg-black/5">
+                                <div
+                                  className="h-2.5 rounded-full"
+                                  style={{
+                                    width: `${Math.min(100, Math.max(0, pct))}%`,
+                                    backgroundColor: col,
+                                  }}
+                                />
+                              </div>
+
+                              <div className="mt-2 text-xs text-black/50">
+                                Share of total granted:{" "}
+                                <span className="font-extrabold text-black">{pct.toFixed(1)}%</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-4 align-top font-semibold text-black">{row.count}</td>
+                            <td className="px-5 py-4 align-top text-right font-extrabold text-black">
+                              {formatZar(row.total)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-5 text-xs text-black/50">
+                  Filter affects all dashboard numbers + the pie + the leaderboard.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,297 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const API_BUILD = "2026-01-04_gold_v1";
+
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "";
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+  if (!url) throw new Error("Missing SUPABASE URL at runtime (.env.local).");
+  if (!key) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY at runtime. Restart dev server (Ctrl+C then npm run dev).");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+async function getIdOrCode(ctx: any) {
+  const p = (ctx as any)?.params;
+  const params = await Promise.resolve(p);
+  const raw = String((params as any)?.id ?? "").trim();
+  try { return decodeURIComponent(raw).trim(); } catch { return raw.trim(); }
+}
+
+async function resolveDealId(supabase: any, idOrCode: string) {
+  const key = String(idOrCode || "").trim();
+  if (!key) return null;
+
+  if (isUuid(key)) return key;
+
+  let r = await supabase.from("deals").select("id").eq("deal_code", key).maybeSingle();
+  if (!r.data && !r.error) {
+    r = await supabase.from("deals").select("id").ilike("deal_code", key).maybeSingle();
+  }
+  if (r.error) throw new Error(r.error.message);
+  return r.data?.id ?? null;
+}
+
+async function loadBanks(supabase: any, dealId: string) {
+  const r = await supabase.from("deal_banks").select("*").eq("deal_id", dealId);
+  if (r.error) return { rows: [], source: "deal_banks", error: r.error };
+  return { rows: r.data ?? [], source: "deal_banks", error: null };
+}
+
+const DEALS_ALLOWED = new Set([
+  "applicant",
+  "bank",
+  "amount_zar",
+  "consultant",
+  "agent_name",
+  "attorney",
+  "stage",
+  "notes",
+  "submitted_date",
+  "last_moved_by",
+  "last_moved_at",
+  "applicant_email",
+  "applicant_cell",
+  "property_address",
+  "registration_number",
+  "registration_attorney",
+  "registration_attorney_tel",
+  "agent_comm_paid",
+  "payment_due_date",
+]);
+
+const STAGES_ALLOWED = new Set([
+  "submitted",
+  "aip",
+  "instructed",
+  "granted",
+  "ntu",
+  "registrations",
+]);
+
+function cleanDate(v: any) {
+  if (v === "" || v === undefined) return null;
+  return v;
+}
+
+function normalizeStage(v: any) {
+  if (v === "" || v === undefined || v === null) return null;
+  const s = String(v).trim().toLowerCase();
+  return s || null;
+}
+
+function sanitizePatch(input: any) {
+  // If the body came through as a JSON string, parse it.
+  if (typeof input === "string") {
+    try { input = JSON.parse(input); } catch { return { payload: {}, requestedStage: null }; }
+  }
+
+  if (!input || typeof input !== "object") return { payload: {}, requestedStage: null };
+
+  const src: any = { ...input };
+  const out: any = {};
+
+  // MOVE payload support
+  if ("nextStage" in src && !("stage" in src)) src.stage = src.nextStage;
+  if ("next_stage" in src && !("stage" in src)) src.stage = src.next_stage;
+
+  if ("stage" in src) src.stage = normalizeStage(src.stage);
+
+  if ("movedBy" in src && !("last_moved_by" in src)) src.last_moved_by = String(src.movedBy || "").trim() || null;
+  if ("moved_by" in src && !("last_moved_by" in src)) src.last_moved_by = String(src.moved_by || "").trim() || null;
+
+  if ("movedAt" in src && !("last_moved_at" in src)) src.last_moved_at = src.movedAt;
+  if ("moved_at" in src && !("last_moved_at" in src)) src.last_moved_at = src.moved_at;
+
+  if (src.stage && !("last_moved_at" in src)) src.last_moved_at = new Date().toISOString();
+
+  const requestedStage = src.stage ?? null;
+
+  for (const k of Object.keys(src)) {
+    if (!DEALS_ALLOWED.has(k)) continue;
+
+    if (k === "stage") {
+      out[k] = src.stage;
+      continue;
+    }
+
+    if (k === "submitted_date" || k === "payment_due_date") out[k] = cleanDate(src[k]);
+    else out[k] = src[k];
+  }
+
+  delete out.created_at;
+  delete out.updated_at;
+  delete out.deal_code;
+  delete out.id;
+
+  return { payload: out, requestedStage };
+}
+
+export async function GET(_req: Request, ctx: any) {
+  try {
+    const idOrCode = await getIdOrCode(ctx);
+    if (!idOrCode) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Missing deal id/code" }, { status: 400 });
+
+    const supabase = getSupabase();
+    const dealId = await resolveDealId(supabase, idOrCode);
+    if (!dealId) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, { status: 404 });
+
+    const dealRes = await supabase.from("deals").select("*").eq("id", dealId).maybeSingle();
+    if (dealRes.error) return NextResponse.json({ api_build: API_BUILD, ok: false, error: dealRes.error.message }, { status: 500 });
+    if (!dealRes.data) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, { status: 404 });
+
+    const banksRes = await loadBanks(supabase, dealId);
+
+    return NextResponse.json(
+      { api_build: API_BUILD, ok: true, deal: { ...dealRes.data, banks: banksRes.rows }, banks_source: banksRes.source },
+      { status: 200 }
+    );
+  } catch (e: any) {
+    return NextResponse.json({ api_build: API_BUILD, ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  try {
+    const idOrCode = await getIdOrCode(ctx);
+    if (!idOrCode) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Missing deal id/code" }, { status: 400 });
+
+    const supabase = getSupabase();
+    const dealId = await resolveDealId(supabase, idOrCode);
+    if (!dealId) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, { status: 404 });
+
+    const before = await supabase
+      .from("deals")
+      .select("id, deal_code, stage")
+      .eq("id", dealId)
+      .maybeSingle();
+
+    if (before.error) return NextResponse.json({ api_build: API_BUILD, ok: false, error: before.error.message }, { status: 500 });
+    if (!before.data) return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, { status: 404 });
+
+    const rawBody = await req.text();
+    let body: any = {};
+    try {
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      return NextResponse.json(
+        {
+          api_build: API_BUILD,
+          ok: false,
+          error: "Invalid JSON body",
+          received: rawBody.slice(0, 200),
+          hint: "PowerShell tip: wrap JSON in single quotes or use ConvertTo-Json -Compress."
+        },
+        { status: 400 }
+      );
+    }
+
+    const { payload, requestedStage } = sanitizePatch(body);
+
+    if (requestedStage && !STAGES_ALLOWED.has(requestedStage)) {
+      return NextResponse.json(
+        { api_build: API_BUILD, ok: false, error: `Invalid stage '${requestedStage}'. Allowed: ${Array.from(STAGES_ALLOWED).join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    if (!Object.keys(payload).length) {
+      return NextResponse.json(
+        {
+          api_build: API_BUILD,
+          ok: false,
+          error: "No valid fields to update (payload contained only non-deals keys).",
+          debug: {
+            rawBody: rawBody.slice(0, 200),
+            bodyType: typeof body,
+            bodyKeys: body && typeof body === "object" ? Object.keys(body) : null,
+            payloadKeys: Object.keys(payload || {}),
+            payload
+          }
+        },
+        { status: 400 }
+      );
+    }
+
+    const upd = await supabase
+      .from("deals")
+      .update(payload)
+      .eq("id", dealId)
+      .select("*")
+      .maybeSingle();
+
+    if (upd.error) {
+      console.error("DEALS_PATCH_ERROR:", upd.error);
+      return NextResponse.json({ api_build: API_BUILD, ok: false, error: upd.error.message }, { status: 500 });
+    }
+
+    if (!upd.data) {
+      return NextResponse.json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, { status: 404 });
+    }
+
+    // Hard guarantee: if stage requested, DB must reflect it
+    if (requestedStage && normalizeStage(upd.data.stage) !== requestedStage) {
+      return NextResponse.json(
+        {
+          api_build: API_BUILD,
+          ok: false,
+          error: "Stage update did not apply (DB returned a different stage).",
+          requestedStage,
+          dbStage: upd.data.stage,
+        },
+        { status: 409 }
+      );
+    }
+
+    const fromStage = normalizeStage(before.data.stage);
+    const toStage = normalizeStage(upd.data.stage);
+
+    if (toStage && fromStage !== toStage) {
+      const movedBy = String(upd.data.last_moved_by || body?.movedBy || body?.moved_by || "system").trim() || "system";
+      const movedAt = upd.data.last_moved_at || new Date().toISOString();
+      const note = String(body?.note ?? "").trim() || null;
+
+      const ins = await supabase.from("deal_activity").insert({
+        deal_id: upd.data.id,
+        deal_code: upd.data.deal_code,
+        from_stage: fromStage,
+        to_stage: toStage,
+        moved_by: movedBy,
+        moved_at: movedAt,
+        note,
+        actor: movedBy,
+        action: "move",
+      });
+
+      if (ins.error) {
+        console.error("DEAL_ACTIVITY_INSERT_ERROR:", ins.error);
+        return NextResponse.json(
+          { api_build: API_BUILD, ok: false, error: "Stage changed but activity log failed (deal_activity insert error).", detail: ins.error.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    const banksRes = await loadBanks(supabase, upd.data.id);
+
+    return NextResponse.json(
+      { api_build: API_BUILD, ok: true, deal: { ...upd.data, banks: banksRes.rows }, banks_source: banksRes.source },
+      { status: 200 }
+    );
+  } catch (e: any) {
+    return NextResponse.json({ api_build: API_BUILD, ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}

@@ -1,0 +1,496 @@
+﻿=== MOVE DEBUG DUMP ===
+ROOT: C:\dev\capital-bonds-dashboard
+DATE: 01/04/2026 18:08:12
+
+
+=== VIEW ROUTES (searching app/**) ===
+C:\dev\capital-bonds-dashboard\app\activity\page.tsx:94  href={`/deal/${encodeURIComponent(r.deal_id)}`}
+C:\dev\capital-bonds-dashboard\app\_components\StageBoard.tsx:169  href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`}
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:215  <Link href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`} className="text-sm font-extrabold text-black hover:underline">
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:234  href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`}
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:252  <Link href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`} className="text-sm font-extrabold text-black hover:underline">
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:275  href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`}
+
+----- FILE: C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx
+----- SIZE: 13450 bytes
+----- BEGIN
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+function stageToRoute(stage: any) {
+  let s = String(stage ?? "").trim().toLowerCase();
+  if (!s) s = "submitted";
+  if (s === "arp") s = "aip";
+  if (s === "registration" || s === "regs" || s === "reg") s = "registrations";
+  if (s === "instructions" || s === "instruct") s = "instructed";
+  if (s === "grant" || s === "approved") s = "granted";
+  return __USE_QUERY_STAGE ? ("/?stage=" + encodeURIComponent(s)) : ("/" + s);
+}
+// move_nav_helper_v1
+// move_nav_helper_v1
+
+function normalizeStage(v: any): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase();
+}
+import MoveDealModal from "./MoveDealModal";
+import { useDeals, type Deal, type Stage } from "./useDeals";
+
+function money(n: number) {
+  return `R ${Number(n || 0).toLocaleString("en-ZA")}`;
+}
+
+function stageLabel(s0: any) {
+  const s = String(s0 || "").toLowerCase();
+
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  return "NTU"; }
+
+function toAmount(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function toDateSafe(v: any) {
+  if (!v) return "-";
+  const s = String(v);
+  // If it's already yyyy-mm-dd, keep it
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // try ISO
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export default function StageTable({ stage }: { stage: Stage }) {
+  const { deals, refreshAll } = useDeals();
+
+  
+  const stageKey = String(stage || "").toLowerCase() as Stage;
+const list = useMemo(() => {
+    const raw = String(stage || "").trim().toLowerCase();
+    const s =
+      raw === "registration" ? "registrations" :
+      raw === "iap" ? "aip" :
+      raw;
+    return (deals || [])
+      .filter((d: any) => String(d.stage || "").toLowerCase() === s)
+      .map((d: any) => ({ ...d, amount: toAmount(d) })) as Deal[];
+  }, [deals, stageKey]);
+  const isRegistrations = (() => { const raw = String(stage || "").trim().toLowerCase(); return raw === "registrations" || raw === "registration"; })();
+  const [open, setOpen] = useState(false);
+  const [activeDeal, setActiveDeal] = useState<any>(null);
+
+  async function handleMove(payload: {
+    toStage: Stage;
+    movedBy: string;
+    note?: string;
+    bankNotes?: any[];
+    registration?: {
+      registration_number?: string;
+      registration_attorney?: string;
+      registration_attorney_tel?: string;
+      registration_attorney_contact?: string;
+      agent_comm_paid?: boolean;
+      payment_due_date?: string;
+    };
+  }) {
+    if (!activeDeal?.id) return;
+
+    const res = await fetch(`/api/deals/${encodeURIComponent(activeDeal.id)}`, { cache: "no-store", 
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toStage: payload.toStage,
+        movedBy: payload.movedBy,
+        note: payload.note || "",
+        bankNotes: [], // disabled (deadline mode),
+        // registrations payload (safe for other stages too)
+        registration: payload.registration || null,
+      }),
+    });
+      // move_redirect_force_v3
+      if (typeof window !== "undefined" && res.ok) {
+        const __dest =
+          (typeof payload !== "undefined" ? (payload?.to_stage ?? payload?.toStage ?? payload?.stage ?? null) : null) ??
+          (typeof body !== "undefined" ? (body?.to_stage ?? body?.toStage ?? body?.stage ?? null) : null) ??
+          (typeof toStage !== "undefined" ? toStage : null) ??
+          (typeof nextStage !== "undefined" ? nextStage : null) ??
+          (typeof targetStage !== "undefined" ? targetStage : null) ??
+          (typeof moveToStage !== "undefined" ? moveToStage : null) ??
+          null;
+
+        if (__dest) {
+          setTimeout(() => window.location.assign(stageToRoute(__dest)), 10);
+        }
+      }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || `Failed to move deal (${res.status})`);
+    }
+
+    await refreshAll();
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Stage</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">{stageLabel(stageKey)}</div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            {list.length} deal{list.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        {stageKey === "submitted" ? (
+          <Link
+            href="/submitted/new"
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+          >
+            + New Submission
+          </Link>
+        ) : null}
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left">
+            <thead className="border-b border-black/10 bg-white">
+              {isRegistrations ? (
+                <tr className="text-xs font-extrabold text-black/70">
+                  <th className="px-4 py-3">App. Date</th>
+                  <th className="px-4 py-3">Consultant</th>
+                  <th className="px-4 py-3">Agent</th>
+                  <th className="px-4 py-3">Deal Ref</th>
+                  <th className="px-4 py-3">Client Name</th>
+                  <th className="px-4 py-3">Loan Amount</th>
+                  <th className="px-4 py-3">Bank</th>
+                  <th className="px-4 py-3">Attorney Instructed</th>
+                  <th className="px-4 py-3">Attorney Tel No</th>
+                  <th className="px-4 py-3">Attorney Contact Person</th>
+                  <th className="px-4 py-3">Reg.</th>
+                  <th className="px-4 py-3">Notes</th>
+                  <th className="px-4 py-3">Agent Comm PAID</th>
+                  <th className="px-4 py-3">Payment due date</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              ) : (
+                <tr className="text-xs font-extrabold text-black/70">
+                  <th className="px-4 py-3">Deal</th>
+                  <th className="px-4 py-3">Applicant</th>
+                  <th className="px-4 py-3">Banks</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Consultant</th>
+                  <th className="px-4 py-3">Agent</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              )}
+            </thead>
+
+            <tbody className="divide-y divide-black/10">
+              {list.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm font-semibold text-black/60" colSpan={isRegistrations ? 15 : 7}>
+                    No deals in this stage yet.
+                  </td>
+                </tr>
+              ) : isRegistrations ? (
+                list.map((d: any) => {
+                  const banks = Array.isArray(d.banks) ? d.banks : [];
+                  const bankNames = banks.map((b: any) => b.bank_name).filter(Boolean).join(", ");
+
+                  // registration payload could be stored as:
+                  // - top-level columns OR nested object returned by API
+                  const r = d.registration || {};
+                  const attorney = r.registration_attorney ?? d.registration_attorney ?? "-";
+                  const attorneyTel = r.registration_attorney_tel ?? d.registration_attorney_tel ?? "-";
+                  const attorneyContact = r.registration_attorney_contact ?? d.registration_attorney_contact ?? "-";
+                  const regNo = r.registration_number ?? d.registration_number ?? "-";
+                  const commPaid = (r.agent_comm_paid ?? d.agent_comm_paid);
+                  const dueDate = r.payment_due_date ?? d.payment_due_date;
+
+                  return (
+                    <tr key={d.id} className="hover:bg-black/[0.02]">
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{toDateSafe(d.submitted_date || d.app_date || d.created_at)}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.agent_name || "-"}</td>
+                      <td className="px-4 py-4">
+                        <Link href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`} className="text-sm font-extrabold text-black hover:underline">
+                          {d.deal_code || d.id}
+                        </Link>
+                        <div className="mt-1 text-xs font-bold text-black/50">{d.id}</div>
+                      </td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.applicant || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{bankNames || d.bank || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{attorney || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{attorneyTel || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{attorneyContact || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{regNo || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.notes || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">
+                        {commPaid === true ? "YES" : commPaid === false ? "NO" : "-"}
+                      </td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{dueDate ? toDateSafe(dueDate) : "-"}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2"><Link
+                            href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                list.map((d: any) => {
+                  const banks = Array.isArray(d.banks) ? d.banks : [];
+                  const bankNames = banks.map((b: any) => b.bank_name).filter(Boolean).join(", ");
+
+                  return (
+                    <tr key={d.id} className="hover:bg-black/[0.02]">
+                      <td className="px-4 py-4">
+                        <Link href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`} className="text-sm font-extrabold text-black hover:underline">
+                          {d.deal_code || d.id}
+                        </Link>
+                        <div className="mt-1 text-xs font-bold text-black/50">{d.id}</div>
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.applicant || "-"}</td>
+
+                      <td className="px-4 py-4">
+                        <div className="text-sm font-semibold text-black">{bankNames || d.bank || "-"}</div>
+                        <div className="mt-1 text-xs font-bold text-black/50">
+                          {banks.length} bank{banks.length === 1 ? "" : "s"}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.agent_name || "-"}</td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2"><Link
+                            href={`/deal-sb/${encodeURIComponent(d.deal_code ?? d.dealCode ?? d.id)}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeDeal ? (
+        <MoveDealModal open={open} onClose={() => setOpen(false)} deal={activeDeal} onMove={handleMove} />
+      ) : null}
+    </div>
+  );
+}
+
+----- END
+
+----- FILE: C:\dev\capital-bonds-dashboard\app\_components\DealMovePanel.tsx
+----- SIZE: 5231 bytes
+----- BEGIN
+"use client";
+
+import { useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "submitted";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+export default function DealMovePanel() {
+  const router = useRouter();
+  const params = useParams() as any;
+  const sp = useSearchParams();
+
+  const target = useMemo(() => {
+    const pId = params?.id ? String(params.id) : "";
+    const pCode = params?.code ? String(params.code) : "";
+    const qCode = sp?.get("code") ? String(sp.get("code")) : "";
+    return (pCode || qCode || pId || "").trim();
+  }, [params, sp]);
+
+  const [open, setOpen] = useState(false);
+  const [nextStage, setNextStage] = useState("aip");
+  const [note, setNote] = useState("");
+  const [movedBy, setMovedBy] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Try to auto-fill movedBy once
+  useMemo(() => {
+    try {
+      const v =
+        (typeof window !== "undefined" && (localStorage.getItem("cb_user") || localStorage.getItem("user") || localStorage.getItem("name"))) ||
+        "";
+      if (v && !movedBy) setMovedBy(v);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stageToRoute(stage: any) {
+    const s = normalizeStage(stage);
+    return "/" + encodeURIComponent(s);
+  }
+
+  async function doMove() {
+    if (!target) {
+      setErr("Could not detect deal id/code from the URL.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    const stage = normalizeStage(nextStage);
+
+    try {
+      const res = await fetch(/api/deals/, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          stage,
+          note: note?.trim() ? note.trim() : null,
+          movedBy: movedBy?.trim() ? movedBy.trim() : null,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || "Move failed");
+      }
+
+      // go to the stage page you moved it to
+      router.push(stageToRoute(stage));
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Move failed");
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Move this deal</div>
+          <div className="text-xs font-semibold text-black/60">
+            Deal ref: <span className="font-extrabold text-black">{target || ""}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm"
+        >
+          {open ? "Close" : "Move"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 grid gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={nextStage}
+              onChange={(e) => setNextStage(e.target.value)}
+              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black outline-none"
+            >
+              <option value="submitted">Submitted</option>
+              <option value="aip">AIP</option>
+              <option value="instructed">Instructed</option>
+              <option value="granted">Granted</option>
+              <option value="ntu">NTU</option>
+              <option value="registrations">Registrations</option>
+            </select>
+
+            <input
+              value={movedBy}
+              onChange={(e) => setMovedBy(e.target.value)}
+              placeholder="Moved by (optional)"
+              className="min-w-[220px] flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+            />
+          </div>
+
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add a note (this will carry with the move)"
+            rows={3}
+            className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={doMove}
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-60"
+            >
+              {busy ? "Moving..." : "Confirm Move"}
+            </button>
+
+            {err && <div className="text-sm font-semibold text-red-600">{err}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// deal_move_panel_v2
+----- END
+
+=== DEAL PAGE FILES FOUND ===
+NONE FOUND.
+
+=== MARKER SCAN ===
+C:\dev\capital-bonds-dashboard\app\_components\DealMovePanel.tsx:16  export default function DealMovePanel() {
+C:\dev\capital-bonds-dashboard\app\_components\DealMovePanel.tsx:46  function stageToRoute(stage: any) {
+C:\dev\capital-bonds-dashboard\app\_components\DealMovePanel.tsx:80  router.push(stageToRoute(stage));
+C:\dev\capital-bonds-dashboard\app\_components\DealMovePanel.tsx:157  // deal_move_panel_v2
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:6  function stageToRoute(stage: any) {
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:13  return __USE_QUERY_STAGE ? ("/?stage=" + encodeURIComponent(s)) : ("/" + s);
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:15  // move_nav_helper_v1
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:16  // move_nav_helper_v1
+C:\dev\capital-bonds-dashboard\app\_components\StageTable.tsx:119  setTimeout(() => window.location.assign(stageToRoute(__dest)), 10);
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:1  const __USE_QUERY_STAGE = false;
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:2  function stageToRoute(stage: any) {
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:9  return __USE_QUERY_STAGE ? ("/?stage=" + encodeURIComponent(s)) : ("/" + s);
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:11  // move_nav_helper_v1
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:12  // move_nav_helper_v1
+C:\dev\capital-bonds-dashboard\app\lib\dealsStore.ts:152  setTimeout(() => window.location.assign(stageToRoute(__dest)), 10);

@@ -1,0 +1,5 @@
+import StageTable from "../_components/StageTable";
+
+export default function RegistrationsPage() {
+  return <StageTable stage={"registrations"} />;
+}

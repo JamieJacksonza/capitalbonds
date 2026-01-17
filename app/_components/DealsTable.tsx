@@ -1,0 +1,97 @@
+"use client";
+
+import Link from "next/link";
+import type { Deal, Stage } from "../lib/deals";
+import { stageMoves } from "../lib/deals";
+
+const money = (n: number) =>
+  new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(n);
+
+function Pill({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-black/10 bg-black/[0.03] px-2.5 py-1 text-xs font-extrabold text-black">
+      {text}
+    </span>
+  );
+}
+
+export default function DealsTable({
+  stage,
+  deals,
+  onMove,
+}: {
+  stage: Stage;
+  deals: Deal[];
+  onMove: (id: string, next: Stage) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-black/10">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-black/[0.02]">
+          <tr className="text-xs font-extrabold text-black">
+            <th className="px-4 py-3">Deal ID</th>
+            <th className="px-4 py-3">Applicant</th>
+            <th className="px-4 py-3">Amount</th>
+            <th className="px-4 py-3">Bank</th>
+            <th className="px-4 py-3">Submitted</th>
+            <th className="px-4 py-3">Status</th>
+            <th className="hidden px-4 py-3 lg:table-cell">Notes</th>
+            <th className="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {deals.length === 0 ? (
+            <tr className="border-t border-black/10">
+              <td className="px-4 py-6 text-sm font-semibold text-black" colSpan={8}>
+                No deals match your filters.
+              </td>
+            </tr>
+          ) : (
+            deals.map((d) => (
+              <tr key={d.id} className="border-t border-black/10 hover:bg-black/[0.02]">
+                <td className="px-4 py-3 font-extrabold">{d.id}</td>
+                <td className="px-4 py-3">{d.applicant}</td>
+                <td className="px-4 py-3">{money(d.amount)}</td>
+                <td className="px-4 py-3">{d.bank}</td>
+                <td className="px-4 py-3 text-black">{d.submitted}</td>
+                <td className="px-4 py-3">
+                  <Pill text={d.status} />
+                </td>
+                <td className="hidden px-4 py-3 text-black lg:table-cell">
+                  {d.notes ? d.notes : "â€”"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Link
+                      href={`/deal-by-code/${encodeURIComponent(d.id)}`}
+                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+                    >
+                      View
+                    </Link>
+
+                    {stageMoves[stage].map((m) => (
+                      <button
+                        key={m.next}
+                        onClick={() => onMove(d.id, m.next)}
+                        className="rounded-xl bg-black px-3 py-2 text-xs font-extrabold text-white hover:opacity-90"
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+

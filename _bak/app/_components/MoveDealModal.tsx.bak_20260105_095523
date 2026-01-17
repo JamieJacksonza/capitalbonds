@@ -1,0 +1,173 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+function stageToRoute(stage: any) {
+  const s = normalizeStage(stage) || "submitted";
+  return "/" + encodeURIComponent(s);
+}
+
+export default function MoveDealModal(props: {
+  open: boolean;
+  onClose: () => void;
+  deal: any;
+}) {
+  const { open, onClose, deal } = props;
+
+  const [nextStage, setNextStage] = useState("aip");
+  const [movedBy, setMovedBy] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setErr(null);
+    setBusy(false);
+
+    const currentStage = normalizeStage(deal?.stage) || "submitted";
+    setNextStage(currentStage);
+
+    try {
+      const v =
+        (typeof window !== "undefined" &&
+          (localStorage.getItem("cb_user") ||
+            localStorage.getItem("user") ||
+            localStorage.getItem("name"))) ||
+        "";
+      setMovedBy(String(v || ""));
+    } catch {}
+
+    setNote("");
+  }, [open, deal?.id, deal?.deal_code]);
+
+  async function confirm() {
+    const target = String(deal?.id ?? deal?.deal_code ?? deal?.dealCode ?? "").trim();
+    if (!target) {
+      setErr("Missing deal id / deal_code on this row.");
+      return;
+    }
+
+    const stage = normalizeStage(nextStage);
+    if (!stage) {
+      setErr("Please select a stage.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    const payload: any = {
+      toStage: stage,
+      movedBy: movedBy?.trim() ? movedBy.trim() : null,
+      note: note?.trim() ? note.trim() : null,
+    };
+
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(target)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Move failed (${res.status})`);
+      }
+
+      onClose();
+      setTimeout(() => window.location.assign(stageToRoute(stage)), 50);
+    } catch (e: any) {
+      setErr(e?.message || "Move failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
+          <div>
+            <div className="text-sm font-extrabold text-black">Move deal</div>
+            <div className="text-xs font-semibold text-black/60">
+              {deal?.deal_code ? `Deal ref: ${deal.deal_code}` : `Deal id: ${String(deal?.id ?? "")}`}
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="grid gap-3 p-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/70">Next stage</div>
+              <select
+                value={nextStage}
+                onChange={(e) => setNextStage(e.target.value)}
+                className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black outline-none"
+              >
+                <option value="submitted">Submitted</option>
+                <option value="aip">AIP</option>
+                <option value="instructed">Instructed</option>
+                <option value="granted">Granted</option>
+                <option value="ntu">NTU</option>
+                <option value="registrations">Registrations</option>
+              </select>
+            </label>
+
+            <label className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/70">Moved by</div>
+              <input
+                value={movedBy}
+                onChange={(e) => setMovedBy(e.target.value)}
+                placeholder="Name (optional)"
+                className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+              />
+            </label>
+          </div>
+
+          <label className="grid gap-1">
+            <div className="text-xs font-extrabold text-black/70">Note (optional)</div>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={4}
+              placeholder="Type a note..."
+              className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={confirm}
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-60"
+            >
+              {busy ? "Saving..." : "Confirm"}
+            </button>
+
+            {err && <div className="text-sm font-semibold text-red-600">{err}</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,109 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type ActivityRow = {
+  id: string;
+  deal_id: string;
+  deal_code: string;
+  actor: string;
+  action: string;
+  from_stage: string | null;
+  to_stage: string | null;
+  created_at: string;
+};
+
+function prettyStage(s?: string | null) {
+  if (!s) return "";
+  const map: Record<string,string> = {
+    submitted: "Submitted",
+    aip: "AIP",
+    instructed: "Instructed",
+    granted: "Granted",
+    ntu: "NTU",
+    registrations: "Registrations",
+  };
+  return map[s] || s;
+}
+
+export default function ActivityPage() {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<ActivityRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/activity?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load activity");
+      setRows(json.activity || []);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load activity");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const empty = useMemo(() => !loading && rows.length === 0, [loading, rows]);
+
+  return (
+    <div className="mx-auto w-full max-w-7xl px-6 py-6">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-black">Activity</h1>
+          <p className="mt-1 text-sm text-black/60">Search by deal code or consultant name and see every movement.</p>
+        </div>
+
+        <div className="flex w-full max-w-xl items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search: SB-123ABC or Kristie"
+            className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black shadow-sm outline-none focus:ring-2 focus:ring-black/10"
+          />
+          <button
+            onClick={load}
+            className="rounded-2xl bg-black px-4 py-3 text-sm font-extrabold text-white shadow-sm"
+          >
+            Search
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="grid grid-cols-12 gap-2 border-b border-black/10 px-4 py-3 text-xs font-extrabold text-black/60">
+          <div className="col-span-2">Time</div>
+          <div className="col-span-2">Deal</div>
+          <div className="col-span-2">Moved By</div>
+          <div className="col-span-3">From</div>
+          <div className="col-span-3">To</div>
+        </div>
+
+        {loading && <div className="px-4 py-6 text-sm font-semibold text-black/60">Loading</div>}
+        {err && <div className="px-4 py-6 text-sm font-semibold text-red-600">{err}</div>}
+        {empty && <div className="px-4 py-6 text-sm font-semibold text-black/60">No activity found.</div>}
+
+        {!loading && !err && rows.map((r) => (
+          <a
+            key={r.id}
+            href={`/deal/${encodeURIComponent(r.deal_id)}`}
+            className="grid grid-cols-12 gap-2 px-4 py-3 text-sm text-black hover:bg-black/[0.03]"
+          >
+            <div className="col-span-2 font-semibold text-black/70">
+              {new Date(r.created_at).toLocaleString("en-ZA")}
+            </div>
+            <div className="col-span-2 font-extrabold">{r.deal_code}</div>
+            <div className="col-span-2 font-bold">{r.actor}</div>
+            <div className="col-span-3 font-semibold text-black/70">{prettyStage(r.from_stage)}</div>
+            <div className="col-span-3 font-extrabold">{prettyStage(r.to_stage)}</div>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}

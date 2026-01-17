@@ -1,0 +1,105 @@
+﻿import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type DealStage = (typeof ALLOWED)[number];
+
+function normalizeStage(v: any): DealStage | null {
+  if (v == null) return null;
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "iap") return "aip";
+  if (s === "registration") return "registrations";
+  if ((ALLOWED as readonly string[]).includes(s)) return s as DealStage;
+  return null;
+}
+
+export async function GET(_req: Request, ctx: { params: { id: string } }) {
+  try {
+    const id = ctx?.params?.id;
+    if (!id) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+
+    const { data, error } = await supabaseAdmin
+      .from("deals")
+      .select("*, banks:deal_banks(*)")
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      console.error("DEAL_GET_SUPABASE_ERROR:", error);
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, deal: data }, { status: 200 });
+  } catch (e: any) {
+    console.error("DEAL_GET_ROUTE_ERROR:", e);
+    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  const id = ctx?.params?.id;
+  if (!id) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+
+  const toStage = normalizeStage(body?.toStage ?? body?.stage);
+  if (!toStage) return NextResponse.json({ ok: false, error: "Missing/invalid toStage" }, { status: 400 });
+
+  const movedBy = (body?.movedBy ?? body?.updatedBy ?? null);
+  const note = (body?.note ?? "");
+
+  // 1) ALWAYS update the deal stage first (this is the source of truth for tables)
+  const reg = body?.registration ?? null;
+
+  const updatePayload: any = {
+    stage: toStage,
+    last_moved_by: movedBy,
+    last_moved_at: new Date().toISOString(),
+    // keep existing notes unless you want to overwrite
+    ...(typeof note === "string" && note.length ? { notes: note } : {}),
+  };
+
+  // Only store registration fields when moving to registrations
+  if (toStage === "registrations" && reg) {
+    updatePayload.registration_number = reg.registration_number ?? null;
+    updatePayload.registration_attorney = reg.registration_attorney ?? null;
+    updatePayload.registration_attorney_tel = reg.registration_attorney_tel ?? null;
+    updatePayload.registration_attorney_contact = reg.registration_attorney_contact ?? null;
+    updatePayload.agent_comm_paid = (typeof reg.agent_comm_paid === "boolean" ? reg.agent_comm_paid : null);
+    updatePayload.payment_due_date = reg.payment_due_date ?? null;
+  }
+
+  const { data: deal, error: dealErr } = await supabaseAdmin
+    .from("deals")
+    .update(updatePayload)
+    .eq("id", id)
+    .select("*, banks:deal_banks(*)")
+    .single();
+
+  if (dealErr) {
+    console.error("DEAL_STAGE_UPDATE_ERROR:", dealErr);
+    return NextResponse.json({ ok: false, error: dealErr.message }, { status: 500 });
+  }
+
+  // 2) Best-effort: bank notes / logging (must never block the stage update)
+  try {
+    const bankNotes = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+    if (bankNotes.length) {
+      // If your table requires updated_by NOT NULL, we only attempt when movedBy exists
+      if (movedBy) {
+        // You can implement your bank notes upsert here safely.
+        // Leaving as no-op because schemas differ, and we dont want to break stage updates.
+      } else {
+        console.warn("Skipped bank notes write: movedBy missing");
+      }
+    }
+  } catch (e) {
+    console.error("BANK_NOTES_WRITE_SKIPPED:", e);
+  }
+
+  return NextResponse.json({ ok: true, deal }, { status: 200 });
+}

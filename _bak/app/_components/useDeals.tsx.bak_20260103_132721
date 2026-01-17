@@ -1,0 +1,90 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+type AnyDeal = any;
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normStage(v: any) {
+  return String(v || "").toLowerCase().trim();
+}
+
+function normalizeDeal(d: AnyDeal) {
+  const amount = toNumber(d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0);
+  const stage = normStage(d?.stage);
+
+  const agentName = d?.agent_name ?? d?.agentName ?? null;
+
+  const banks = Array.isArray(d?.banks)
+    ? d.banks.map((b: any) => ({
+        ...b,
+        bank_name: b?.bank_name ?? b?.bankName ?? null,
+        bankName: b?.bankName ?? b?.bank_name ?? null,
+        amount_zar: toNumber(b?.amount_zar ?? b?.amountZar ?? 0),
+        amountZar: toNumber(b?.amountZar ?? b?.amount_zar ?? 0),
+      }))
+    : [];
+
+  return {
+    ...d,
+    stage,
+    amount_zar: amount,
+    amountZar: amount,
+
+    agent_name: agentName,
+    agentName: agentName,
+
+    banks,
+  };
+}
+
+export function useDeals() {
+  const [deals, setDeals] = useState<AnyDeal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const res = await fetch("/api/deals", { cache: "no-store" });
+        const json = await res.json();
+
+        const arr = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.deals)
+          ? json.deals
+          : [];
+
+        const normalized = arr.map(normalizeDeal);
+
+        if (alive) setDeals(normalized);
+      } catch (e: any) {
+        if (alive) setError(e?.message || "Failed to load deals");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // return both names in case existing code expects either
+  return {
+    deals,
+    loading,
+    isLoading: loading,
+    error,
+  };
+}

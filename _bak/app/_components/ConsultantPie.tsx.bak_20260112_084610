@@ -1,0 +1,309 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import type { Deal } from "../lib/deals";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import { useRouter } from "next/navigation";
+
+const money = (n: number) =>
+  new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(n);
+
+// Bright palette
+const COLORS = [
+  "#DC2626", // red
+  "#F59E0B", // yellow/amber
+  "#111827", // black (near-black)
+  "#2563EB", // blue
+];
+
+function todayYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function monthStart(month: string) {
+  return `${month}-01`;
+}
+
+function monthEnd(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m, 0);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function ytdStart() {
+  const y = new Date().getFullYear();
+  return `${y}-01-01`;
+}
+
+function lastNDaysStart(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - (n - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+type Mode = "month" | "range";
+
+export default function ConsultantPie({ deals }: { deals: Deal[] }) {
+  const router = useRouter();
+
+  const [mode, setMode] = useState<Mode>("month");
+  const [month, setMonth] = useState(() => todayYMD().slice(0, 7));
+  const [from, setFrom] = useState(() => lastNDaysStart(30));
+  const [to, setTo] = useState(() => todayYMD());
+
+  const { start, end, label } = useMemo(() => {
+    if (mode === "month") {
+      const s = monthStart(month);
+      const e = monthEnd(month);
+      return { start: s, end: e, label: `Month: ${month}` };
+    }
+
+    const s = (from || "").trim();
+    const e = (to || "").trim();
+    const nice = s && e ? `Range: ${s}  ${e}` : "Range: All time";
+    return { start: s, end: e, label: nice };
+  }, [mode, month, from, to]);
+
+  const filteredGranted = useMemo(() => {
+    const granted = deals.filter((d) => d.stage === "granted");
+    if (!start || !end) return granted;
+
+    return granted.filter((d) => {
+      const dt = (d.grantedAt || d.submitted || "").slice(0, 10);
+      if (!dt) return false;
+      return dt >= start && dt <= end;
+    });
+  }, [deals, start, end]);
+
+  const data = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const d of filteredGranted) {
+      const key = (d.consultant || "Unassigned").trim();
+      map.set(key, (map.get(key) || 0) + (Number(d.amount) || 0));
+    }
+
+    const rows = Array.from(map.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    if (rows.length > 9) {
+      const top = rows.slice(0, 8);
+      const other = rows.slice(8).reduce((sum, r) => sum + r.value, 0);
+      return [...top, { name: "Other", value: other }];
+    }
+
+    return rows;
+  }, [filteredGranted]);
+
+  const total = useMemo(() => data.reduce((s, r) => s + r.value, 0), [data]);
+
+  function goToConsultant(name: string) {
+    if (!name || name === "Other") return;
+    router.push(`/consultant/${encodeURIComponent(name)}`);
+  }
+
+  function setPresetThisMonth() {
+    setMode("month");
+    setMonth(todayYMD().slice(0, 7));
+  }
+
+  function setPresetYTD() {
+    setMode("range");
+    setFrom(ytdStart());
+    setTo(todayYMD());
+  }
+
+  function setPresetAllTime() {
+    setMode("range");
+    setFrom("");
+    setTo("");
+  }
+
+  function setPresetLast30() {
+    setMode("range");
+    setFrom(lastNDaysStart(30));
+    setTo(todayYMD());
+  }
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-lg font-extrabold text-black">
+            Consultant performance (Granted value)
+          </div>
+          <div className="mt-1 text-sm font-semibold text-black/80">
+            {label}  Total:{" "}
+            <span className="font-extrabold text-black">{money(total)}</span>
+          </div>
+          <div className="mt-1 text-xs font-bold text-black/60">
+            Click a slice or a consultant row to drill into their deals.
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={setPresetThisMonth}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            This month
+          </button>
+          <button
+            onClick={setPresetLast30}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Last 30 days
+          </button>
+          <button
+            onClick={setPresetYTD}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            YTD
+          </button>
+          <button
+            onClick={setPresetAllTime}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            All time
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <div className="flex rounded-2xl border border-black/10 bg-white p-1">
+          <button
+            onClick={() => setMode("month")}
+            className={[
+              "flex-1 rounded-2xl px-3 py-2 text-xs font-extrabold",
+              mode === "month" ? "bg-black text-white" : "text-black hover:bg-black/[0.03]",
+            ].join(" ")}
+          >
+            Month
+          </button>
+          <button
+            onClick={() => setMode("range")}
+            className={[
+              "flex-1 rounded-2xl px-3 py-2 text-xs font-extrabold",
+              mode === "range" ? "bg-black text-white" : "text-black hover:bg-black/[0.03]",
+            ].join(" ")}
+          >
+            Date range
+          </button>
+        </div>
+
+        {mode === "month" ? (
+          <div className="lg:col-span-2">
+            <div className="mb-2 text-xs font-extrabold text-black/80">Select month</div>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+        ) : (
+          <>
+            <div>
+              <div className="mb-2 text-xs font-extrabold text-black/80">From</div>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+            <div>
+              <div className="mb-2 text-xs font-extrabold text-black/80">To</div>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {data.length === 0 || total <= 0 ? (
+        <div className="mt-6 rounded-2xl border border-black/10 bg-black/[0.03] p-5">
+          <div className="text-sm font-extrabold text-black">No granted value in this filter.</div>
+          <div className="mt-1 text-sm font-semibold text-black/80">
+            Move a deal to <span className="font-extrabold text-black">Granted</span> or switch to All time.
+          </div>
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <div className="h-[340px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Tooltip
+                  formatter={(value: any, name: any) => [money(Number(value) || 0), String(name)]}
+                />
+                <Pie
+                  data={data}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={75}
+                  outerRadius={130}
+                  paddingAngle={2}
+                  onClick={(entry: any) => goToConsultant(String(entry?.name || ""))}
+                >
+                  {data.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} cursor="pointer" />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="space-y-3">
+            {data.map((r, i) => {
+              const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
+              const isOther = r.name === "Other";
+              const href = `/consultant/${encodeURIComponent(r.name)}`;
+
+              return (
+                <Link
+                  key={r.name}
+                  href={isOther ? "#" : href}
+                  onClick={(e) => {
+                    if (isOther) e.preventDefault();
+                  }}
+                  className={[
+                    "flex items-center justify-between rounded-2xl border border-black/10 bg-white px-4 py-3",
+                    isOther ? "cursor-default" : "hover:bg-black/[0.02] hover:border-black/20 transition",
+                  ].join(" ")}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-extrabold text-black">
+                        {r.name}
+                      </div>
+                      <div className="text-xs font-bold text-black/80">{pct}%</div>
+                    </div>
+                  </div>
+
+                  <div className="text-sm font-extrabold text-black">{money(r.value)}</div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

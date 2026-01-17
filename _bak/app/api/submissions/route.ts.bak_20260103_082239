@@ -1,0 +1,125 @@
+﻿import { createClient } from "@supabase/supabase-js";
+
+function supaAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    "";
+  if (!url || !key) throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function dealCode() {
+  const chars = "ABCDEF0123456789";
+  let out = "SB-";
+  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+export async function POST(req: Request) {
+  try {
+    const supabase = supaAdmin();
+    const body = await req.json();
+
+    const applicant = String(body?.applicant || "").trim();
+    const consultant = String(body?.consultant || "").trim() || null;
+    const agent_name = String(body?.agent_name ?? body?.agentName ?? "").trim() || null;
+
+    const applicant_email = String(body?.applicant_email ?? body?.email ?? "").trim() || null;
+    const applicant_cell = String(body?.applicant_cell ?? body?.cell ?? "").trim() || null;
+    const property_address = String(body?.property_address ?? body?.propertyAddress ?? "").trim() || null;
+
+    const notes = String(body?.notes ?? "").trim() || null;
+    const requestedAmount = Number(body?.amount);
+
+    if (!applicant) {
+      return new Response(JSON.stringify({ ok: false, error: "Applicant is required" }), { status: 400 });
+    }
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      return new Response(JSON.stringify({ ok: false, error: "Amount must be a valid number" }), { status: 400 });
+    }
+
+    // banks payload can be:
+    // 1) body.banks[] (new)
+    // 2) body.bank + body.amount (old)
+    const banksRaw = Array.isArray(body?.banks) ? body.banks : null;
+
+    const banks = (banksRaw && banksRaw.length > 0)
+      ? banksRaw.map((b: any) => ({
+          bank_name: String(b?.bank_name ?? b?.bank ?? "").trim(),
+          amount_zar: b?.amount_zar != null && b?.amount_zar !== "" ? Number(b.amount_zar) : null,
+          reference_number: String(b?.reference_number ?? "").trim() || null,
+          contact_name: String(b?.contact_name ?? "").trim() || null,
+          contact_email: String(b?.contact_email ?? "").trim() || null,
+          contact_phone: String(b?.contact_phone ?? "").trim() || null,
+        })).filter((b: any) => !!b.bank_name)
+      : [{
+          bank_name: String(body?.bank ?? "Other").trim() || "Other",
+          amount_zar: null,
+          reference_number: null,
+          contact_name: null,
+          contact_email: null,
+          contact_phone: null,
+        }];
+
+    if (!banks.length) {
+      return new Response(JSON.stringify({ ok: false, error: "At least one bank is required" }), { status: 400 });
+    }
+
+    const code = dealCode();
+
+    // Deals table: store requested amount only (NOT cumulative)
+    const dealPayload: any = {
+      deal_code: code,
+      applicant,
+      bank: banks.length > 1 ? "Multiple" : banks[0].bank_name,
+      amount_zar: requestedAmount,
+      consultant,
+      agent_name,
+      notes,
+      stage: "submitted",
+      submitted_date: new Date().toISOString().slice(0, 10),
+      applicant_email,
+      applicant_cell,
+      property_address,
+    };
+
+    const { data: deal, error: dealErr } = await supabase
+      .from("deals")
+      .insert(dealPayload)
+      .select("*, banks:deal_banks(*)")
+      .single();
+
+    if (dealErr || !deal) {
+      return new Response(JSON.stringify({ ok: false, error: dealErr?.message || "Failed to create deal" }), { status: 500 });
+    }
+
+    // Create deal_banks rows
+    const bankRows = banks.map((b: any) => ({
+      deal_id: deal.id,
+bank_name: b.bank_name,
+      amount_zar: Number.isFinite(b.amount_zar) && b.amount_zar > 0 ? b.amount_zar : requestedAmount,
+      reference_number: b.reference_number,
+      contact_name: b.contact_name,
+      contact_email: b.contact_email,
+      contact_phone: b.contact_phone,
+    }));
+
+    const { error: banksErr } = await supabase.from("deal_banks").insert(bankRows);
+    if (banksErr) {
+      return new Response(JSON.stringify({ ok: false, error: banksErr.message }), { status: 500 });
+    }
+
+    // Return deal (client only needs id)
+    const { data: finalDeal } = await supabase
+      .from("deals")
+      .select("*, banks:deal_banks(*)")
+      .eq("id", deal.id)
+      .single();
+
+    return new Response(JSON.stringify({ ok: true, record: finalDeal || deal }), { status: 200 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "SUBMISSION_ROUTE_ERROR" }), { status: 500 });
+  }
+}

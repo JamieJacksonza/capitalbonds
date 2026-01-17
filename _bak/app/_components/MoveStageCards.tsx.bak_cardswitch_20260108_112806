@@ -1,0 +1,64 @@
+﻿"use client";
+
+import * as React from "react";
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-zinc-900">{title}</div>
+      <div className="mt-2 text-xs text-zinc-600">{children}</div>
+    </div>
+  );
+}
+
+export default function MoveStageCards({ toStage }: { toStage: unknown }) {
+  const s = String(toStage ?? "").trim().toLowerCase();
+
+  const isKnown =
+    s === "aip" ||
+    s === "instructed" ||
+    s === "granted" ||
+    s === "registrations" ||
+    s === "registration" ||
+    s === "ntu";
+
+  return (
+    <div className="mt-4 grid grid-cols-1 gap-3">
+      {!isKnown ? (
+        <Card title="Stage inputs">
+          Select a <b>Next stage</b> to show that stages input card.
+        </Card>
+      ) : null}
+
+      {s === "aip" ? (
+        <Card title="AIP section">
+          Placeholder  well add the AIP inputs here.
+        </Card>
+      ) : null}
+
+      {s === "instructed" ? (
+        <Card title="Instructed section">
+          Placeholder — we’ll add the Instructed inputs here.
+        </Card>
+      ) : null}
+
+      {s === "granted" ? (
+        <Card title="Granted section">
+          Placeholder — we’ll add the Granted inputs here.
+        </Card>
+      ) : null}
+
+      {s === "registrations" || s === "registration" ? (
+        <Card title="Registration section">
+          Placeholder  well add the Registration inputs here.
+        </Card>
+      ) : null}
+
+      {s === "ntu" ? (
+        <Card title="NTU section">
+          Placeholder  well add the NTU inputs here.
+        </Card>
+      ) : null}
+    </div>
+  );
+}

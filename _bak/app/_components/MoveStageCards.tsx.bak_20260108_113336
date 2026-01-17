@@ -1,0 +1,28 @@
+﻿"use client";
+
+import AipMoveCard from "./move-cards/AipMoveCard";
+import InstructedMoveCard from "./move-cards/InstructedMoveCard";
+import GrantedMoveCard from "./move-cards/GrantedMoveCard";
+import RegistrationsMoveCard from "./move-cards/RegistrationsMoveCard";
+import NtuMoveCard from "./move-cards/NtuMoveCard";
+
+function norm(v: any) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "registration" || s === "reg" || s === "regs") return "registrations";
+  if (s === "arp") return "aip";
+  if (s === "grant") return "granted";
+  if (s === "instruct") return "instructed";
+  return s;
+}
+
+export default function MoveStageCards({ toStage }: { toStage: any }) {
+  const s = norm(toStage);
+
+  if (s === "aip") return <AipMoveCard />;
+  if (s === "instructed") return <InstructedMoveCard />;
+  if (s === "granted") return <GrantedMoveCard />;
+  if (s === "registrations") return <RegistrationsMoveCard />;
+  if (s === "ntu") return <NtuMoveCard />;
+
+  return null;
+}

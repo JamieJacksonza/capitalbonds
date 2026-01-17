@@ -1,0 +1,315 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type AnyObj = Record<string, any>;
+
+function fmtDate(s: any) {
+  if (!s) return "";
+  const v = String(s);
+  return v.length >= 10 ? v.slice(0, 10) : v;
+}
+
+function fmtMoney(v: any) {
+  const n = typeof v === "number" ? v : Number(String(v || "").replace(/[^\d.-]/g, ""));
+  if (!isFinite(n)) return "";
+  try {
+    return n.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
+  } catch {
+    return "R " + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+}
+
+function Row({ label, value }: { label: string; value: any }) {
+  const v = value === null || value === undefined || value === "" ? "" : String(value);
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="text-[11px] font-extrabold text-black/55">{label}</div>
+      <div className="text-xs font-extrabold text-black text-right whitespace-pre-wrap">{v}</div>
+    </div>
+  );
+}
+
+function StageCard({ title, items }: { title: string; items: Array<{ label: string; value: any }> }) {
+  const hasAny = items.some((x) => x.value !== null && x.value !== undefined && String(x.value || "").trim() !== "");
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-extrabold text-black">{title}</div>
+        <div className="text-[11px] font-extrabold text-black/45">{hasAny ? "Captured" : ""}</div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {items.map((it, idx) => (
+          <Row key={title + idx} label={it.label} value={it.value} />
+        ))}
+
+        {!hasAny ? <div className="pt-1 text-[11px] font-semibold text-black/35">No captured inputs for this stage yet.</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function lastMoveTo(moveHistory: AnyObj[], toStage: string) {
+  const target = String(toStage || "").toLowerCase();
+  for (let i = moveHistory.length - 1; i >= 0; i--) {
+    const t = String(moveHistory[i]?.to || "").toLowerCase();
+    if (t === target) return moveHistory[i];
+  }
+  return null;
+}
+
+function dataOf(m: AnyObj | null) {
+  const d = m?.data;
+  return d && typeof d === "object" ? d : {};
+}
+
+export default function DealViewClient({ dealKey }: { dealKey: string }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [deal, setDeal] = useState<AnyObj | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setErr(null);
+
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+
+        if (!res.ok || json?.ok === false) throw new Error(json?.error || `Failed to load deal (${res.status})`);
+
+        const d = (json as any)?.deal ?? json;
+        if (alive) setDeal(d);
+      } catch (e: any) {
+        if (alive) setErr(e?.message || "Failed to load deal");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [dealKey]);
+
+  const banks = useMemo(() => {
+    if (!deal) return [];
+    const a = (deal as any)?.deal_banks;
+    const b = (deal as any)?.banks;
+    return Array.isArray(a) ? a : Array.isArray(b) ? b : [];
+  }, [deal]);
+
+  const activity = useMemo(() => {
+    if (!deal) return [];
+    const a = (deal as any)?.deal_activity;
+    return Array.isArray(a) ? a : [];
+  }, [deal]);
+
+  const moveHistory = useMemo(() => {
+    if (!deal) return [];
+    const mh = (deal as any)?.move_history;
+    return Array.isArray(mh) ? mh : [];
+  }, [deal]);
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="h-28 rounded-2xl bg-white/70" />
+        <div className="mt-6 h-52 rounded-2xl bg-white/70" />
+      </div>
+    );
+  }
+
+  if (err || !deal) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border border-red-200 bg-white p-6">
+          <div className="text-sm font-extrabold text-red-600">Could not open deal</div>
+          <div className="mt-2 text-sm font-semibold text-black/70">{err || "Deal not found."}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const code = (deal as any)?.deal_code ?? (deal as any)?.code ?? "Deal";
+  const stage = String((deal as any)?.stage || "");
+  const amount = (deal as any)?.amount ?? (deal as any)?.loan_amount ?? (deal as any)?.deal_amount ?? (deal as any)?.amount_zar;
+
+  const applicant = (deal as any)?.applicant_name ?? (deal as any)?.client_name ?? (deal as any)?.name ?? (deal as any)?.full_name ?? (deal as any)?.applicant ?? "";
+  const consultant = (deal as any)?.consultant ?? (deal as any)?.consultant_name ?? "";
+  const bank = (deal as any)?.bank ?? (banks?.length ? (banks.length > 1 ? "Multiple" : banks[0]?.bank_name || "") : "");
+  const status = (deal as any)?.status ?? (deal as any)?.submission_status ?? "";
+  const submitted = (deal as any)?.submitted_at ?? (deal as any)?.submitted_date ?? (deal as any)?.created_at;
+  const notes = (deal as any)?.notes ?? (deal as any)?.note ?? "";
+
+  // Fallback to move_history for stage dates + stage-specific fields
+  const mhSubmitted = lastMoveTo(moveHistory, "submitted");
+  const mhAip = lastMoveTo(moveHistory, "aip");
+  const mhInstructed = lastMoveTo(moveHistory, "instructed");
+  const mhGranted = lastMoveTo(moveHistory, "granted");
+  const mhRegs = lastMoveTo(moveHistory, "registrations");
+  const mhNtu = lastMoveTo(moveHistory, "ntu");
+
+  const instructedData = dataOf(mhInstructed);
+  const grantedData = dataOf(mhGranted);
+  const regsData = dataOf(mhRegs);
+  const ntuData = dataOf(mhNtu);
+  const aipData = dataOf(mhAip);
+
+const submittedItems = [{ label: "Submitted date", value: fmtDate(submitted || mhSubmitted?.at) }];
+
+  const aipItems = [
+    { label: "Bank count", value: banks.length ? String(banks.length) : (aipData?.bank_count ?? "") },
+    { label: "Banks", value: banks.length ? banks.map((b: any) => b?.bank_name).filter(Boolean).join(", ") : (aipData?.banks ?? "") },
+    {
+      label: "Bank notes",
+      value: banks.length
+        ? banks.map((b: any) => (b?.bank_notes ? `${b.bank_name}: ${b.bank_notes}` : "")).filter(Boolean).join("\n")
+        : (aipData?.bank_notes ?? aipData?.bankNotes ?? ""),
+    },
+  ];
+
+  const instructedItems = [
+    { label: "Instructed date", value: fmtDate((deal as any)?.instructed_date ?? (deal as any)?.instructed_at ?? mhInstructed?.at) },
+    { label: "Attorney", value: (deal as any)?.attorney ?? instructedData?.attorney ?? "" },
+  ];
+
+  const grantedItems = [
+    { label: "Granted date", value: fmtDate((deal as any)?.granted_date ?? (deal as any)?.granted_at ?? mhGranted?.at) },
+    { label: "Conditions", value: (deal as any)?.granted_conditions ?? grantedData?.conditions ?? grantedData?.granted_conditions ?? "" },
+  ];
+
+  const regItems = [
+    { label: "Registration number", value: (deal as any)?.registration_number ?? regsData?.registration_number ?? regsData?.registrationNumber ?? "" },
+    { label: "Attorney", value: (deal as any)?.registration_attorney ?? regsData?.registration_attorney ?? regsData?.registrationAttorney ?? "" },
+    {
+      label: "Attorney tel",
+      value:
+        (deal as any)?.registration_attorney_tel ??
+        (deal as any)?.registration_attorney_contact ??
+        regsData?.registration_attorney_tel ??
+        regsData?.registration_attorney_contact ??
+        regsData?.registrationAttorneyTel ??
+        regsData?.registrationAttorneyContact ??
+        "",
+    },
+    { label: "Attorney email", value: (deal as any)?.registration_attorney_email ?? regsData?.registration_attorney_email ?? regsData?.registrationAttorneyEmail ?? "" },
+    { label: "Reference", value: (deal as any)?.registration_attorney_reference ?? regsData?.registration_attorney_reference ?? regsData?.registrationAttorneyReference ?? regsData?.reference ?? "" },
+    { label: "Payment due date", value: fmtDate((deal as any)?.payment_due_date ?? regsData?.payment_due_date ?? regsData?.paymentDueDate ?? "") },
+    {
+      label: "Commission paid",
+      value:
+        (deal as any)?.agent_comm_paid === true
+          ? "Yes"
+          : (deal as any)?.agent_comm_paid === false
+          ? "No"
+          : regsData?.agent_comm_paid === true || regsData?.agentCommPaid === true || regsData?.commissionPaid === true
+          ? "Yes"
+          : regsData?.agent_comm_paid === false || regsData?.agentCommPaid === false || regsData?.commissionPaid === false
+          ? "No"
+          : "",
+    },
+  ];
+
+  const ntuItems = [
+    { label: "NTU reason", value: (deal as any)?.ntu_reason ?? ntuData?.ntu_reason ?? ntuData?.ntuReason ?? "" },
+    { label: "NTU note", value: (deal as any)?.ntu_note ?? ntuData?.ntu_note ?? ntuData?.ntuNote ?? "" },
+  ];
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <div className="text-[11px] font-extrabold text-black/50">Deal</div>
+            <div className="mt-1 text-2xl font-black tracking-tight text-black">{code}</div>
+            <div className="mt-1 text-sm font-extrabold text-black/60">Stage: {stage}</div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-[11px] font-extrabold text-black/50">Amount</div>
+            <div className="mt-1 text-lg font-black text-black">{fmtMoney(amount)}</div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-black/10 bg-white p-5">
+            <div className="text-sm font-extrabold text-black">Client details</div>
+            <div className="mt-4 space-y-2">
+              <Row label="Applicant" value={applicant} />
+              <Row label="Consultant" value={consultant} />
+              <Row label="Bank" value={bank} />
+              <Row label="Status" value={status} />
+              <Row label="Submitted" value={fmtDate(submitted)} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-black/10 bg-white p-5">
+            <div className="text-sm font-extrabold text-black">General notes</div>
+            <div className="mt-3 rounded-2xl border border-black/10 p-4">
+              <div className="text-sm font-semibold text-black/80 whitespace-pre-wrap">
+                {String(notes || "").trim() ? String(notes) : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-extrabold text-black">Stage inputs</div>
+          <div className="text-[11px] font-extrabold text-black/45">Current: {stage}</div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <StageCard title="Submitted" items={submittedItems} />
+          <StageCard title="AIP" items={aipItems} />
+          <StageCard title="Instructed" items={instructedItems} />
+          <StageCard title="Granted" items={grantedItems} />
+          <StageCard title="Registrations" items={regItems} />
+          <StageCard title="NTU" items={ntuItems} />
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-extrabold text-black">Timeline</div>
+          <div className="text-[11px] font-extrabold text-black/45">{activity.length} items</div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {activity.length === 0 ? (
+            <div className="text-sm font-semibold text-black/40">No activity yet.</div>
+          ) : (
+            activity.map((a: AnyObj, idx: number) => (
+              <div key={String(a?.id || idx)} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-extrabold text-black">
+                    {(a?.actor || a?.moved_by || "system").toString()}
+                    {(a?.from_stage || a?.to_stage) ? (
+                      <span className="font-extrabold text-black/50">
+                        {" "}
+                        {String(a?.from_stage || "")}
+                        {a?.from_stage && a?.to_stage ? "  " : ""}
+                        {String(a?.to_stage || "")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-[11px] font-extrabold text-black/45">{fmtDate(a?.moved_at || a?.created_at)}</div>
+                </div>
+
+                {a?.note ? <div className="mt-2 text-sm font-semibold text-black/70 whitespace-pre-wrap">{String(a.note)}</div> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+

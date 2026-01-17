@@ -1,0 +1,146 @@
+﻿"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+
+// If this file exists, we’ll show it. If it doesn't, remove the import line.
+import StatusBankNotesCard from "./StatusBankNotesCard";
+
+type Props = { dealKey: string };
+
+type Deal = Record<string, any>;
+
+function fmtMoneyZar(v: any) {
+  const n = Number(v);
+  if (!isFinite(n)) return "";
+  try {
+    return n.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
+  } catch {
+    return "R " + n.toFixed(0);
+  }
+}
+
+function fmtDate(v: any) {
+  if (!v) return "";
+  const s = String(v);
+  // keep YYYY-MM-DD as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  return d.toISOString().slice(0, 10);
+}
+
+export default function DealViewClient({ dealKey }: Props) {
+  const [deal, setDeal] = useState<Deal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      setLoading(true);
+      setErr(null);
+
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || json?.ok === false) throw new Error(json?.error || `Failed to load deal (${res.status})`);
+
+        const d = (json as any)?.deal ?? json;
+        if (alive) setDeal(d);
+      } catch (e: any) {
+        if (alive) {
+          setDeal(null);
+          setErr(e?.message || "Failed to load deal");
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+    };
+  }, [dealKey]);
+
+  const title = useMemo(() => {
+    if (!deal) return "Deal";
+    return deal.deal_code || deal.id || "Deal";
+  }, [deal]);
+
+  const stage = deal?.stage ? String(deal.stage) : "";
+  const amountZar = deal?.amount_zar ?? deal?.amount ?? null;
+
+  const items = useMemo(() => {
+    if (!deal) return [];
+    return [
+      ["Deal Code", deal.deal_code],
+      ["Applicant", deal.applicant],
+      ["Email", deal.applicant_email],
+      ["Cell", deal.applicant_cell],
+      ["Bank", deal.bank],
+      ["Amount", fmtMoneyZar(deal.amount_zar)],
+      ["Consultant", deal.consultant],
+      ["Agent", deal.agent_name],
+      ["Attorney", deal.attorney],
+      ["Property Address", deal.property_address],
+      ["Notes", deal.notes],
+      ["Submitted Date", fmtDate(deal.submitted_date)],
+      ["Insurance Needed", String(deal.insurance_needed ?? "")],
+      ["Registration Number", deal.registration_number],
+      ["Registration Attorney", deal.registration_attorney],
+      ["Registration Ref", deal.registration_attorney_reference],
+    ].filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== "");
+  }, [deal]);
+
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <div className="text-xl font-extrabold">{title}</div>
+          {stage ? <div className="text-xs font-semibold text-black/60">Stage: {stage}</div> : null}
+        </div>
+
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+        >
+           Back to Dashboard
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="rounded-2xl border border-black/10 bg-white p-4 text-sm font-semibold text-black/70">
+          Loading deal
+        </div>
+      ) : null}
+
+      {err ? (
+        <div className="rounded-2xl border border-black/20 bg-white p-4 text-sm font-semibold text-black">
+          {err}
+        </div>
+      ) : null}
+
+      {!loading && !err && deal ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {items.map(([k, v]) => (
+              <div key={k} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="text-[11px] font-extrabold text-black/50">{k}</div>
+                <div className="mt-1 text-sm font-semibold text-black whitespace-pre-wrap break-words">
+                  {String(v)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6">
+            <StatusBankNotesCard dealKey={String(dealKey)} amountZar={amountZar ?? null} stage={stage || null} />
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}

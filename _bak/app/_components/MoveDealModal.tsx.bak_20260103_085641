@@ -1,0 +1,54 @@
+import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type DealStage = (typeof ALLOWED)[number];
+
+function normalizeStage(v: any): DealStage | null {
+  if (v == null) return null;
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "iap") return "aip";
+  if (s === "registration") return "registrations";
+  if (ALLOWED.includes(s as DealStage)) return s as DealStage;
+  return null;
+}
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const stage = normalizeStage(url.searchParams.get("stage"));
+    const consultant = url.searchParams.get("consultant");
+
+    let q = supabaseAdmin
+      .from("deals").select("*, banks:deal_banks(*)")
+      .order("created_at", { ascending: false });
+
+    if (stage) q = q.eq("stage", stage);
+    if (consultant) q = q.eq("consultant", consultant);
+
+    const { data, error } = await q;
+
+    if (error) {
+      console.error("DEALS_GET_SUPABASE_ERROR:", error);
+      return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+    }
+
+    // IMPORTANT: normalize for UI compatibility
+    const deals = (data || []).map((d: any) => ({
+      ...d,
+      amount: Number(d.amount_zar ?? 0), // UI expects `amount`
+    }));
+
+    return new Response(JSON.stringify({ ok: true, deals }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("DEALS_GET_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}
+
+export default runtime;

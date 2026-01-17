@@ -1,0 +1,51 @@
+﻿"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import UserSwitcher from "./UserSwitcher";
+
+function cls(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+const LINKS = [
+  { href: "/", label: "Dashboard" },
+  { href: "/submitted", label: "Submitted" },
+  { href: "/aip", label: "AIP" },
+  { href: "/instructed", label: "Instructed" },
+  { href: "/granted", label: "Granted" },
+  { href: "/ntu", label: "NTU" },
+  { href: "/activity", label: "Activity" },
+];
+
+export default function AppTopBar() {
+  const pathname = usePathname();
+
+  return (
+    <div className="sticky top-0 z-50 border-b border-black/10 bg-white/80 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className="flex items-center gap-2">
+          {LINKS.map((l) => {
+            const active = pathname === l.href || (l.href !== "/" && pathname?.startsWith(l.href));
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                className={cls(
+                  "rounded-xl px-3 py-2 text-xs font-extrabold transition",
+                  active
+                    ? "bg-black text-white"
+                    : "bg-white text-black border border-black/10 hover:bg-black/[0.03]"
+                )}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
+        </div>
+
+        <UserSwitcher />
+      </div>
+    </div>
+  );
+}

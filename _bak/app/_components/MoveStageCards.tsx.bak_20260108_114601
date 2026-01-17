@@ -1,0 +1,104 @@
+﻿"use client";
+
+import React from "react";
+import type { Stage } from "../lib/deals";
+
+function normStage(v: any) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "arp") return "aip";
+  if (s === "iap") return "aip";
+  if (s === "registration" || s === "regs" || s === "reg") return "registrations";
+  if (s === "instructions" || s === "instruct") return "instructed";
+  if (s === "grant" || s === "approved") return "granted";
+  return s;
+}
+
+function Card({
+  title,
+  active,
+  children,
+}: {
+  title: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={
+        "rounded-2xl border p-3 " +
+        (active
+          ? "border-black/30 bg-black/[0.03]"
+          : "border-black/10 bg-white")
+      }
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-extrabold text-black">{title}</div>
+        {active ? (
+          <span className="rounded-full bg-black px-2 py-1 text-[10px] font-extrabold text-white">
+            SELECTED
+          </span>
+        ) : (
+          <span className="text-[10px] font-extrabold text-black/40">
+            not selected
+          </span>
+        )}
+      </div>
+
+      <div className="mt-2 text-[11px] font-semibold text-black/70">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function MoveStageCards({
+  toStage,
+}: {
+  toStage?: Stage | string | null;
+}) {
+  const s = normStage(toStage);
+
+  const isAip = s === "aip";
+  const isInstructed = s === "instructed";
+  const isGranted = s === "granted";
+  const isRegistrations = s === "registrations";
+  const isNtu = s === "ntu";
+
+  // If no stage selected yet, keep it compact.
+  if (!s) {
+    return (
+      <div className="mt-3 rounded-2xl border border-black/10 bg-white p-3">
+        <div className="text-[11px] font-extrabold text-black">Stage sections</div>
+        <div className="mt-1 text-[11px] font-semibold text-black/60">
+          Choose a next stage to reveal the correct section fields.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="text-[11px] font-extrabold text-black">Stage sections</div>
+
+      <Card title="AIP SECTION" active={isAip}>
+        We will add the AIP-specific input fields here (youll send the exact columns/inputs next).
+      </Card>
+
+      <Card title="INSTRUCTED SECTION" active={isInstructed}>
+        Instructed-stage fields will live here (attorney instruction details, etc.  well wire the exact inputs next).
+      </Card>
+
+      <Card title="GRANTED SECTION" active={isGranted}>
+        Granted-stage fields will live here (grant details, final bank selection, etc.  inputs coming next).
+      </Card>
+
+      <Card title="REGISTRATION SECTION" active={isRegistrations}>
+        Registration fields will live here (registration number, attorney, tel, agent comm paid, payment due date, notes, etc.  well map exactly to your DB columns next).
+      </Card>
+
+      <Card title="NTU SECTION" active={isNtu}>
+        NTU reason + notes fields will live here (youll tell me the exact NTU inputs you want).
+      </Card>
+    </div>
+  );
+}

@@ -1,0 +1,175 @@
+﻿"use client";
+
+import React from "react";
+import { STAGES, stageMeta, type Stage } from "../../lib/deals";
+
+type AnyObj = Record<string, any>;
+
+function isEmpty(v: any) {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "string" && v.trim() === "") return true;
+  if (Array.isArray(v) && v.length === 0) return true;
+  return false;
+}
+
+function prettyKey(key: string) {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b(id|url|dob)\b/gi, (m) => m.toUpperCase())
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function Row({ label, value }: { label: string; value: any }) {
+  const v = isEmpty(value) ? "—" : String(value);
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="text-[11px] font-extrabold text-black/55">{label}</div>
+      <div className="text-[11px] font-semibold text-black text-right whitespace-pre-wrap max-w-[65%]">
+        {v}
+      </div>
+    </div>
+  );
+}
+
+function pickStageFields(deal: AnyObj, stage: Stage) {
+  const keys = Object.keys(deal || {});
+  const out: Array<[string, any]> = [];
+
+  // Stage-specific prefixes
+  const prefixes: Record<Stage, string[]> = {
+    submitted: ["submitted_", "sub_", "intake_"],
+    aip: ["aip_", "bank_"],
+    instructed: ["instructed_", "instruction_"],
+    granted: ["granted_"],
+    registrations: ["registration_", "payment_", "commission_", "agent_comm_"],
+    ntu: ["ntu_", "decline_"],
+  };
+
+  const wanted = prefixes[stage] || [];
+
+  for (const k of keys) {
+    const lk = k.toLowerCase();
+
+    // skip noisy / obvious non-stage fields
+    if (
+      lk === "id" ||
+      lk === "deal_code" ||
+      lk === "created_at" ||
+      lk === "updated_at" ||
+      lk === "stage" ||
+      lk === "amount" ||
+      lk === "banks" ||
+      lk === "deal_banks" ||
+      lk === "deal_activity" ||
+      lk === "notes" ||
+      lk === "last_moved_by" ||
+      lk === "last_moved_at"
+    ) {
+      continue;
+    }
+
+    if (wanted.some((p) => lk.startsWith(p))) {
+      const v = (deal as any)[k];
+      if (!isEmpty(v)) out.push([k, v]);
+    }
+  }
+
+  // Also include these commonly-used fields inside Registrations even if not prefixed
+  if (stage === "registrations") {
+    const extraKeys = [
+      "registration_number",
+      "registration_attorney",
+      "registration_attorney_tel",
+      "registration_attorney_email",
+      "registration_attorney_reference",
+      "payment_due_date",
+      "agent_comm_paid",
+    ];
+    for (const k of extraKeys) {
+      if (k in (deal as any) && !isEmpty((deal as any)[k])) {
+        if (!out.some(([kk]) => kk === k)) out.push([k, (deal as any)[k]]);
+      }
+    }
+  }
+
+  return out;
+}
+
+function BankMini({ banks }: { banks: AnyObj[] }) {
+  const list = Array.isArray(banks) ? banks : [];
+  if (!list.length) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      {list.map((b, idx) => (
+        <div key={String(b?.id || idx)} className="rounded-xl border border-black/10 p-2">
+          <div className="text-[11px] font-extrabold text-black">{b?.bank_name || "Bank"}</div>
+          {b?.bank_notes ? (
+            <div className="mt-1 text-[11px] text-black/80 whitespace-pre-wrap">{String(b.bank_notes)}</div>
+          ) : (
+            <div className="mt-1 text-[11px] text-black/35">No bank notes.</div>
+          )}
+
+          {(b?.attorney || b?.attorney_note) ? (
+            <div className="mt-2 rounded-xl bg-black/[0.03] p-2">
+              <div className="text-[10px] font-extrabold text-black/60">Attorney</div>
+              {b?.attorney ? (
+                <div className="mt-0.5 text-[11px] font-semibold text-black">{String(b.attorney)}</div>
+              ) : (
+                <div className="mt-0.5 text-[11px] text-black/35">Not captured.</div>
+              )}
+              {b?.attorney_note ? (
+                <div className="mt-1 text-[11px] text-black/80 whitespace-pre-wrap">{String(b.attorney_note)}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function StageInputsByStage({ deal }: { deal: AnyObj }) {
+  if (!deal) return null;
+
+  const banks = (deal as any)?.deal_banks ?? (deal as any)?.banks ?? [];
+
+  return (
+    <div className="mt-5 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-extrabold text-black">Stage inputs</div>
+        <div className="text-[11px] font-semibold text-black/50">Current: {String(deal.stage || "").toUpperCase()}</div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        {STAGES.map((s) => {
+          const title = stageMeta?.[s]?.title || s;
+          const fields = pickStageFields(deal, s);
+          const hasBanks = s === "aip" && Array.isArray(banks) && banks.length > 0;
+          const captured = fields.length > 0 || hasBanks;
+
+          return (
+            <div key={s} className="rounded-2xl border border-black/10 p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-extrabold text-black">{title}</div>
+                <div className="text-[10px] font-semibold text-black/45">{captured ? "Captured" : ""}</div>
+              </div>
+
+              {s === "aip" ? <BankMini banks={banks} /> : null}
+
+              {fields.length ? (
+                <div className="mt-2 space-y-2">
+                  {fields.map(([k, v]) => (
+                    <Row key={k} label={prettyKey(k)} value={typeof v === "boolean" ? (v ? "Yes" : "No") : v} />
+                  ))}
+                </div>
+              ) : !hasBanks ? (
+                <div className="mt-2 text-[11px] text-black/35">No captured inputs for this stage yet.</div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

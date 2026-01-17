@@ -1,0 +1,162 @@
+﻿"use client";
+
+import React from "react";
+import Link from "next/link";
+
+function moneyZar(v: any) {
+  const n = Number(v);
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
+}
+
+function label(v: any) {
+  const s = String(v ?? "").trim();
+  return s || "";
+}
+
+function StagePill({ stage }: { stage: string }) {
+  const s = (stage || "").trim() || "Unknown";
+  return (
+    <span className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium text-zinc-700 bg-white">
+      {s}
+    </span>
+  );
+}
+
+export default function DealViewClient({ deal }: { deal: any }) {
+  const dealCode = label(deal?.deal_code ?? deal?.dealCode);
+  const applicant = label(deal?.applicant);
+  const consultant = label(deal?.consultant);
+  const stage = label(deal?.stage);
+  const amount = moneyZar(deal?.amount_zar ?? deal?.amount);
+  const bank = label(deal?.bank);
+
+  // Put this “top section” first, everything else beneath it (as you asked)
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+      {/* TOP HEADER CARD */}
+      <div className="rounded-2xl border bg-white shadow-sm">
+        <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <div className="text-sm text-zinc-500">
+              <Link href="/" className="hover:underline">Dashboard</Link>
+              <span className="mx-2">/</span>
+              <span className="text-zinc-700">Deal</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-2xl font-semibold tracking-tight">{dealCode}</div>
+              <StagePill stage={stage} />
+            </div>
+
+            <div className="text-sm text-zinc-600">
+              <span className="font-medium text-zinc-800">{applicant}</span>
+              <span className="mx-2"></span>
+              <span>{bank}</span>
+              <span className="mx-2"></span>
+              <span>{consultant}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <div className="text-sm text-zinc-500">Loan Amount</div>
+            <div className="text-2xl font-semibold">{amount}</div>
+
+            <div className="flex gap-2 pt-2">
+              <Link
+                href="/submitted"
+                className="rounded-xl border bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+              >
+                Back to list
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* EVERYTHING ELSE BENEATH */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* LEFT: Main details */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <div className="text-base font-semibold">Deal Details</div>
+              <div className="mt-1 text-sm text-zinc-500">The important stuff your team actually cares about.</div>
+            </div>
+
+            <div className="p-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Applicant" value={applicant} />
+                <Field label="Consultant" value={consultant} />
+                <Field label="Bank" value={bank} />
+                <Field label="Stage" value={stage} />
+                <Field label="Agent Name" value={label(deal?.agent_name)} />
+                <Field label="Attorney" value={label(deal?.attorney)} />
+                <Field label="Submitted Date" value={label(deal?.submitted_date)} />
+                <Field label="Payment Due Date" value={label(deal?.payment_due_date)} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <div className="text-base font-semibold">Property</div>
+            </div>
+            <div className="p-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Property Address" value={label(deal?.property_address)} />
+                <Field label="Registration Number" value={label(deal?.registration_number)} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <div className="text-base font-semibold">Notes</div>
+            </div>
+            <div className="p-5">
+              <div className="whitespace-pre-wrap text-sm text-zinc-800">
+                {label(deal?.notes)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT: Quick info */}
+        <div className="space-y-6">
+          <div className="rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <div className="text-base font-semibold">Contact</div>
+            </div>
+            <div className="p-5 space-y-4">
+              <Field label="Applicant Email" value={label(deal?.applicant_email)} />
+              <Field label="Applicant Cell" value={label(deal?.applicant_cell)} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white shadow-sm">
+            <div className="border-b p-5">
+              <div className="text-base font-semibold">Registration Attorney</div>
+            </div>
+            <div className="p-5 space-y-4">
+              <Field label="Firm" value={label(deal?.registration_attorney)} />
+              <Field label="Contact" value={label(deal?.registration_attorney_contact)} />
+              <Field label="Tel" value={label(deal?.registration_attorney_tel)} />
+              <Field label="Email" value={label(deal?.registration_attorney_email)} />
+              <Field label="Reference" value={label(deal?.registration_attorney_reference)} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="rounded-xl border bg-zinc-50 px-4 py-3">
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-zinc-900">{String(value ?? "")}</div>
+    </div>
+  );
+}

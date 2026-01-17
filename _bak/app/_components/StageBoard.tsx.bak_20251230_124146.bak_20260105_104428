@@ -1,0 +1,347 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import useDeals, { type Deal, type Stage } from "@/app/_components/useDeals";
+
+const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu"];
+const stageTitle: Record<Stage, string> = {
+  submitted: "Submitted",
+  aip: "AIP",
+  instructed: "Instructed",
+  granted: "Granted",
+  ntu: "NTU",
+};
+
+function money(n: number) {
+  return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 }).format(n || 0);
+}
+
+function cls(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function getLoggedInNameSafe() {
+  try {
+    return localStorage.getItem("cb_user") || "System";
+  } catch {
+    return "System";
+  }
+}
+
+type Bank = { id: string; bank_name: string; amount_zar?: number | null };
+type StageNote = { deal_bank_id: string; stage: string; note: string | null };
+
+export default function StageBoard() {
+  const { deals, loading, error, moveDealToStage, refreshAll } = useDeals();
+
+  // move modal state
+  const [open, setOpen] = useState(false);
+  const [targetDeal, setTargetDeal] = useState<Deal | null>(null);
+  const [toStage, setToStage] = useState<Stage>("aip");
+  const [generalNote, setGeneralNote] = useState("");
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [stageNotes, setStageNotes] = useState<StageNote[]>([]);
+  const [bankNotes, setBankNotes] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const byStage = useMemo(() => {
+    const map: Record<Stage, Deal[]> = {
+      submitted: [],
+      aip: [],
+      instructed: [],
+      granted: [],
+      ntu: [],
+    };
+    for (const d of deals || []) {
+      const s = (String(d.stage || "submitted").toLowerCase() as Stage);
+      if (map[s]) map[s].push(d);
+    }
+    return map;
+  }, [deals]);
+
+  function findStageNote(bankId: string, stage: Stage) {
+    const x = stageNotes.find(
+      (n) => n.deal_bank_id === bankId && String(n.stage || "").toLowerCase() === String(stage).toLowerCase()
+    );
+    return x?.note || "";
+  }
+
+  async function openMoveModal(deal: Deal, next: Stage) {
+    setMsg(null);
+    setTargetDeal(deal);
+    setToStage(next);
+    setGeneralNote("");
+    setBanks([]);
+    setStageNotes([]);
+    setBankNotes({});
+    setOpen(true);
+
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(deal.id)}`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || `Failed to load deal detail (${res.status})`);
+
+      const b: Bank[] = data?.banks || [];
+      const sn: StageNote[] = data?.stageNotes || [];
+      setBanks(b);
+      setStageNotes(sn);
+
+      const initial: Record<string, string> = {};
+      for (const bb of b) initial[bb.id] = findStageNote(bb.id, next);
+      setBankNotes(initial);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to load bank details" });
+    }
+  }
+
+  async function confirmMove() {
+    if (!targetDeal) return;
+    const movedBy = getLoggedInNameSafe();
+
+    const payloadBankNotes = Object.entries(bankNotes).map(([bankId, note]) => ({
+      bankId,
+      note: String(note || "").trim(),
+    }));
+
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      await moveDealToStage(targetDeal.id, toStage, {
+        movedBy,
+        note: generalNote.trim(),
+        bankNotes: payloadBankNotes,
+      });
+
+      setMsg({ type: "ok", text: `Moved to ${stageTitle[toStage]} (by ${movedBy})` });
+      setTimeout(() => setOpen(false), 450);
+      await refreshAll();
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to move deal" });
+      await refreshAll();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm text-sm font-extrabold text-black">
+        Loading...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-extrabold text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid gap-5 lg:grid-cols-5">
+        {STAGES.map((s) => (
+          <div key={s} className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-extrabold text-black">{stageTitle[s]}</div>
+              <div className="text-xs font-extrabold text-black/60">{(byStage[s] || []).length}</div>
+            </div>
+
+            {/* table header */}
+            <div className="mt-4 grid grid-cols-[1.4fr_0.9fr_0.9fr_auto] gap-3 rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2">
+              <div className="text-[11px] font-extrabold text-black/60">Applicant</div>
+              <div className="text-[11px] font-extrabold text-black/60">Consultant</div>
+              <div className="text-[11px] font-extrabold text-black/60 text-right">Amount</div>
+              <div className="text-[11px] font-extrabold text-black/60 text-right">Actions</div>
+            </div>
+
+            <div className="mt-2 space-y-2">
+              {(byStage[s] || []).map((d) => (
+                <div
+                  key={d.id}
+                  className="grid grid-cols-[1.4fr_0.9fr_0.9fr_auto] gap-3 rounded-xl border border-black/10 bg-white px-3 py-3 hover:bg-black/[0.015]"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/deal/${encodeURIComponent(d.id)}`}
+                      className="block truncate text-sm font-extrabold text-black hover:underline"
+                      title={d.applicant}
+                    >
+                      {d.applicant}
+                    </Link>
+                    <div className="mt-1 truncate text-[11px] font-bold text-black/50">
+                      {d.deal_code || d.id}
+                    </div>
+                  </div>
+
+                  <div className="truncate text-sm font-extrabold text-black/80">
+                    {d.consultant || ""}
+                  </div>
+
+                  <div className="text-sm font-extrabold text-black text-right">
+                    {money(Number(d.amount || 0))}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = (String(d.stage || "submitted").toLowerCase() as Stage);
+                        const next =
+                          cur === "submitted" ? "aip" :
+                          cur === "aip" ? "instructed" :
+                          cur === "instructed" ? "granted" :
+                          cur === "granted" ? "ntu" :
+                          "submitted";
+                        openMoveModal(d, next);
+                      }}
+                      className="rounded-lg border border-black/10 bg-white px-3 py-2 text-[11px] font-extrabold text-black hover:bg-black/[0.03]"
+                    >
+                      Move
+                    </button>
+
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        const next = e.target.value as Stage;
+                        if (!next) return;
+                        openMoveModal(d, next);
+                        e.currentTarget.value = "";
+                      }}
+                      className="rounded-lg border border-black/10 bg-white px-2 py-2 text-[11px] font-extrabold text-black outline-none focus:border-black/30"
+                      title="Move to..."
+                    >
+                      <option value="" disabled>To...</option>
+                      {STAGES.filter((x) => x !== (String(d.stage || "submitted").toLowerCase() as Stage)).map((x) => (
+                        <option key={x} value={x}>{stageTitle[x]}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+
+              {(byStage[s] || []).length === 0 ? (
+                <div className="rounded-xl border border-dashed border-black/10 bg-white p-4 text-xs font-bold text-black/50">
+                  No deals yet
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Move modal */}
+      {open && targetDeal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
+
+          <div className="relative w-full max-w-3xl rounded-2xl border border-black/10 bg-white p-6 shadow-lg">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-xs font-extrabold text-black/60">Move Deal</div>
+                <div className="mt-1 truncate text-xl font-extrabold text-black">{targetDeal.applicant}</div>
+                <div className="mt-1 text-sm font-semibold text-black/70">
+                  Choose stage + add per-bank notes.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+              >
+                Close
+              </button>
+            </div>
+
+            {msg ? (
+              <div className={cls(
+                "mt-4 rounded-2xl border p-3 text-sm font-extrabold",
+                msg.type === "ok" ? "border-black/10 bg-black/[0.03] text-black" : "border-red-200 bg-red-50 text-red-700"
+              )}>
+                {msg.text}
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div>
+                <div className="text-xs font-extrabold text-black">Move to stage</div>
+                <select
+                  value={toStage}
+                  onChange={(e) => setToStage(e.target.value as Stage)}
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-extrabold text-black outline-none focus:border-black/30"
+                >
+                  {STAGES.filter((x) => x !== (String(targetDeal.stage || "submitted").toLowerCase() as Stage)).map((x) => (
+                    <option key={x} value={x}>{stageTitle[x]}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="text-xs font-extrabold text-black">General move note (optional)</div>
+                <textarea
+                  value={generalNote}
+                  onChange={(e) => setGeneralNote(e.target.value)}
+                  placeholder="Overall note for this move..."
+                  className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <div className="text-sm font-extrabold text-black">Bank notes for {stageTitle[toStage]}</div>
+              <div className="mt-1 text-xs font-bold text-black/60">
+                These notes are stored per bank per stage.
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {banks.length === 0 ? (
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 text-sm font-semibold text-black/60">
+                    No banks found for this deal.
+                  </div>
+                ) : (
+                  banks.map((b) => (
+                    <div key={b.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-extrabold text-black">{b.bank_name}</div>
+                        <div className="text-xs font-extrabold text-black/60">{money(Number(b.amount_zar || 0))}</div>
+                      </div>
+                      <textarea
+                        value={bankNotes[b.id] ?? ""}
+                        onChange={(e) => setBankNotes((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                        placeholder={`Notes for ${b.bank_name} (${stageTitle[toStage]})...`}
+                        className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-2xl border border-black/10 bg-white px-5 py-3 text-sm font-extrabold text-black hover:border-black/20"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={saving}
+                onClick={confirmMove}
+                className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Confirm Move ✅ MARKER"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

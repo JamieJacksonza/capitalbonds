@@ -1,0 +1,195 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || // preferred
+    process.env.SUPABASE_SERVICE_KEY ||      // common alt
+    process.env.SUPABASE_SERVICE_ROLE ||     // common alt
+    process.env.SUPABASE_SECRET_KEY ||       // common alt
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "";
+
+  if (!url || !key) throw new Error("Missing Supabase env vars (URL/KEY). Check .env.local");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+async function getIdFromCtx(ctx: any) {
+  const params = await (ctx as any)?.params;
+  const raw = String(params?.id ?? "").trim();
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch {}
+  return id.trim();
+}
+
+async function resolveDealId(supabase: any, idOrCode: string) {
+  const key = String(idOrCode || "").trim();
+  if (!key) return null;
+
+  if (isUuid(key)) return key;
+
+  const r = await supabase.from("deals").select("id").eq("deal_code", key).maybeSingle();
+  if (r.error) throw new Error(r.error.message);
+  return r.data?.id ?? null;
+}
+
+async function loadBanks(supabase: any, dealId: string) {
+  const r = await supabase.from("deal_banks").select("*").eq("deal_id", dealId);
+  if (r.error) return { rows: [], error: r.error, source: "deal_banks" };
+  return { rows: r.data ?? [], error: null, source: "deal_banks" };
+}
+
+function sanitizeDealPatch(input: any) {
+  if (!input || typeof input !== "object") return {};
+
+  const out: any = { ...input };
+
+  // ---------- map common client keys -> real deals columns ----------
+  if ("nextStage" in out && !("stage" in out)) out.stage = out.nextStage;
+
+  if ("movedBy" in out && !("last_moved_by" in out)) out.last_moved_by = out.movedBy;
+  if ("movedAt" in out && !("last_moved_at" in out)) out.last_moved_at = out.movedAt;
+
+  if ("amountZar" in out && !("amount_zar" in out)) out.amount_zar = out.amountZar;
+
+  if ("paymentDueDate" in out && !("payment_due_date" in out)) out.payment_due_date = out.paymentDueDate;
+
+  if ("applicantEmail" in out && !("applicant_email" in out)) out.applicant_email = out.applicantEmail;
+  if ("applicantCell" in out && !("applicant_cell" in out)) out.applicant_cell = out.applicantCell;
+  if ("propertyAddress" in out && !("property_address" in out)) out.property_address = out.propertyAddress;
+
+  if ("registrationNumber" in out && !("registration_number" in out)) out.registration_number = out.registrationNumber;
+  if ("registrationAttorney" in out && !("registration_attorney" in out)) out.registration_attorney = out.registrationAttorney;
+  if ("registrationAttorneyTel" in out && !("registration_attorney_tel" in out)) out.registration_attorney_tel = out.registrationAttorneyTel;
+  if ("registrationAttorneyContact" in out && !("registration_attorney_contact" in out)) out.registration_attorney_contact = out.registrationAttorneyContact;
+
+  // if someone sends a blob/object called "registration", flatten what we can, then drop it
+  if (out.registration && typeof out.registration === "object") {
+    const r = out.registration;
+    if (r.number && !out.registration_number) out.registration_number = r.number;
+    if (r.attorney && !out.registration_attorney) out.registration_attorney = r.attorney;
+    if (r.tel && !out.registration_attorney_tel) out.registration_attorney_tel = r.tel;
+    if (r.contact && !out.registration_attorney_contact) out.registration_attorney_contact = r.contact;
+  }
+
+  // ---------- normalize empty strings ----------
+  const nullIfEmpty = (v: any) => (v === "" || v === undefined ? null : v);
+
+  out.submitted_date = ("submitted_date" in out) ? nullIfEmpty(out.submitted_date) : out.submitted_date;
+  out.payment_due_date = ("payment_due_date" in out) ? nullIfEmpty(out.payment_due_date) : out.payment_due_date;
+  out.last_moved_at = ("last_moved_at" in out) ? nullIfEmpty(out.last_moved_at) : out.last_moved_at;
+
+  // ---------- DO NOT allow these ----------
+  delete out.id;
+  delete out.deal_code;
+  delete out.created_at;
+  delete out.updated_at;
+
+  // ---------- allowlist ONLY real deals columns ----------
+  const ALLOWED = new Set([
+    "applicant",
+    "bank",
+    "amount_zar",
+    "consultant",
+    "agent_name",
+    "attorney",
+    "stage",
+    "notes",
+    "submitted_date",
+    "last_moved_by",
+    "last_moved_at",
+    "applicant_email",
+    "applicant_cell",
+    "property_address",
+    "registration_number",
+    "registration_attorney",
+    "registration_attorney_tel",
+    "registration_attorney_contact",
+    "agent_comm_paid",
+    "payment_due_date",
+  ]);
+
+  const cleaned: any = {};
+  for (const k of Object.keys(out)) {
+    if (ALLOWED.has(k)) cleaned[k] = out[k];
+  }
+
+  return cleaned;
+}
+
+export async function GET(_req: Request, ctx: any) {
+  try {
+    const idOrCode = await getIdFromCtx(ctx);
+    if (!idOrCode) return NextResponse.json({ ok: false, error: "Missing deal id/code" }, { status: 400 });
+
+    const supabase = getSupabase();
+    const dealId = await resolveDealId(supabase, idOrCode);
+    if (!dealId) return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+
+    const dealRes = await supabase.from("deals").select("*").eq("id", dealId).maybeSingle();
+    if (dealRes.error) return NextResponse.json({ ok: false, error: dealRes.error.message }, { status: 500 });
+    if (!dealRes.data) return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+
+    const banksRes = await loadBanks(supabase, dealId);
+    return NextResponse.json({ ok: true, deal: { ...dealRes.data, banks: banksRes.rows }, banks_source: banksRes.source }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  try {
+    const idOrCode = await getIdFromCtx(ctx);
+    if (!idOrCode) return NextResponse.json({ ok: false, error: "Missing deal id/code" }, { status: 400 });
+
+    const supabase = getSupabase();
+    const dealId = await resolveDealId(supabase, idOrCode);
+    if (!dealId) return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+
+    const body = await req.json().catch(() => ({}));
+
+    // If frontend sends move payload { nextStage, movedBy }, convert to deals columns
+    const movePayload =
+      body?.nextStage
+        ? {
+            stage: String(body.nextStage).trim(),
+            last_moved_at: new Date().toISOString(),
+            last_moved_by: String(body?.movedBy ?? body?.actor ?? "").trim() || null,
+          }
+        : body;
+
+    const payload = sanitizeDealPatch(movePayload);
+
+    const upd = await supabase.from("deals").update(payload).eq("id", dealId).select("*");
+    if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 });
+
+    const row = Array.isArray(upd.data) ? upd.data[0] : upd.data;
+
+    // If UPDATE affected 0 rows, don't lie with "deal not found"  check if it exists (RLS!)
+    if (!row) {
+      const chk = await supabase.from("deals").select("id").eq("id", dealId).maybeSingle();
+      if (chk.error) return NextResponse.json({ ok: false, error: chk.error.message }, { status: 500 });
+
+      if (chk.data?.id) {
+        return NextResponse.json(
+          { ok: false, error: "Update blocked (likely RLS / using anon key instead of service role key)." },
+          { status: 403 }
+        );
+      }
+      return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+    }
+
+    const banksRes = await loadBanks(supabase, row.id);
+    return NextResponse.json({ ok: true, deal: { ...row, banks: banksRes.rows }, banks_source: banksRes.source }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}

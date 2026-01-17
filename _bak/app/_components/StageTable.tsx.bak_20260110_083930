@@ -1,0 +1,252 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo } from "react";
+
+import MoveDealInline from "./MoveDealInline";
+import { useDeals, type Deal, type Stage } from "./useDeals";
+
+const __USE_QUERY_STAGE = false;
+
+function pickDealDeckId(d: any) {
+  return (
+    d?.deal_deck_id ??
+    d?.dealDeckId ??
+    d?.deck_id ??
+    d?.deal_deck ??
+    d?.dealDeckID ??
+    ""
+  );
+}
+
+function stageToRoute(stage: any) {
+  let s = String(stage ?? "").trim().toLowerCase();
+  if (!s) s = "submitted";
+  if (s === "arp") s = "aip";
+  if (s === "registration" || s === "regs" || s === "reg") s = "registrations";
+  if (s === "instructions" || s === "instruct") s = "instructed";
+  if (s === "grant" || s === "approved") s = "granted";
+  return __USE_QUERY_STAGE ? "/?stage=" + encodeURIComponent(s) : "/" + s;
+}
+
+function normalizeStage(v: any): string {
+  const raw = String(v ?? "").trim().toLowerCase();
+  if (raw === "registration" || raw === "regs" || raw === "reg") return "registrations";
+  if (raw === "iap") return "aip";
+  if (raw === "instructions" || raw === "instruct") return "instructed";
+  if (raw === "grant" || raw === "approved") return "granted";
+  return raw || "submitted";
+}
+
+function money(n: number) {
+  return `R ${Number(n || 0).toLocaleString("en-ZA")}`;
+}
+
+function stageLabel(s0: any) {
+  const s = String(s0 || "").toLowerCase();
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  return "NTU";
+}
+
+function toAmount(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function toDateSafe(v: any) {
+  if (!v) return "-";
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function pickApplicant(d: any) {
+  return (
+    d?.client_name ??
+    d?.clientName ??
+    d?.applicant ??
+    d?.applicant_name ??
+    d?.applicantName ??
+    "-"
+  );
+}
+
+function pickDealRef(d: any) {
+  return (
+    d?.deal_ref ??
+    d?.dealRef ??
+    d?.deal_reference ??
+    d?.dealReference ??
+    d?.reference ??
+    "-"
+  );
+}
+
+function pickBank(d: any) {
+  return d?.bank ?? d?.bank_name ?? d?.bankName ?? "-";
+}
+
+export default function StageTable({ stage }: { stage: Stage }) {
+  const { deals } = useDeals();
+
+  const normalized = useMemo(() => normalizeStage(stage), [stage]);
+  const stageKey = normalized as Stage;
+  const isRegistrations = normalized === "registrations";
+
+  const list = useMemo(() => {
+    return (deals || [])
+      .filter((d: any) => normalizeStage(d?.stage) === normalized)
+      .map((d: any) => ({ ...d, amount: toAmount(d) })) as Deal[];
+  }, [deals, normalized]);
+
+  const colSpan = isRegistrations ? 15 : 6;
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Stage</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">
+            {stageLabel(stageKey)}
+          </div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            {list.length} deal{list.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        {stageKey === "submitted" ? (
+          <Link
+            href="/submitted/new"
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+          >
+            + New Submission
+          </Link>
+        ) : null}
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left">
+            <thead className="border-b border-black/10 bg-white">
+              {isRegistrations ? (
+                <tr className="text-xs font-extrabold text-black/70">
+                  <th className="px-4 py-3">App. Date</th>
+                  <th className="px-4 py-3">Consultant</th>
+                  <th className="px-4 py-3">Agent</th>
+                  <th className="px-4 py-3">Deal Ref</th>
+                  <th className="px-4 py-3">Client Name</th>
+                  <th className="px-4 py-3">Loan Amount</th>
+                  <th className="px-4 py-3">Bank</th>
+                  <th className="px-4 py-3">Attorney Instructed</th>
+                  <th className="px-4 py-3">Attorney Tel No</th>
+                  <th className="px-4 py-3">Attorney Contact</th>
+                  <th className="px-4 py-3">Reg.</th>
+                  <th className="px-4 py-3">Notes</th>
+                  <th className="px-4 py-3">Agent Comm PAID</th>
+                  <th className="px-4 py-3">Payment due date</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              ) : (
+                <tr className="text-xs font-extrabold text-black/70">
+                  <th className="px-4 py-3">Deal deck ID</th>
+                  <th className="px-4 py-3">Applicant</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Consultant</th>
+                  <th className="px-4 py-3">Agent</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              )}
+            </thead>
+
+            <tbody className="divide-y divide-black/10">
+              {list.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm font-semibold text-black/70" colSpan={colSpan}>
+                    No deals in {stageLabel(stageKey)}.
+                  </td>
+                </tr>
+              ) : (
+                list.map((d: any) =>
+                  isRegistrations ? (
+                    <tr key={d.id} className="text-sm">
+                      <td className="px-4 py-4 font-semibold text-black">
+                        {toDateSafe(d?.application_date ?? d?.app_date ?? d?.created_at)}
+                      </td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.consultant || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.agent_name || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{pickDealRef(d)}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{pickApplicant(d)}</td>
+                      <td className="px-4 py-4 font-extrabold text-black">{money(toAmount(d))}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{pickBank(d)}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.registration_attorney || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.registration_attorney_tel || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.registration_attorney_contact || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.registration_number || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">{d.note || d.notes || "-"}</td>
+                      <td className="px-4 py-4 font-semibold text-black">
+                        {String(d.agent_comm_paid ?? d.agent_commission_paid ?? "-")}
+                      </td>
+                      <td className="px-4 py-4 font-semibold text-black">{toDateSafe(d.payment_due_date)}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={`/deal/${encodeURIComponent(d.id)}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+                          <MoveDealInline deal={d} />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    <tr key={d.id} className="text-sm">
+<td className="px-4 py-4 font-semibold text-black">
+                        {pickDealDeckId(d) || "-"}
+                      </td>
+
+                      <td className="px-4 py-4 font-semibold text-black">{pickApplicant(d)}</td>
+
+                      <td className="px-4 py-4 font-extrabold text-black">{money(toAmount(d))}</td>
+
+                      <td className="px-4 py-4 font-semibold text-black">{d.consultant || "-"}</td>
+
+                      <td className="px-4 py-4 font-semibold text-black">{d.agent_name || "-"}</td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={`/deal/${encodeURIComponent(d.id)}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+                          <MoveDealInline deal={d} />
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                )
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="text-xs font-semibold text-black/50">
+        Route: <span className="font-extrabold text-black/70">{stageToRoute(stageKey)}</span>
+      </div>
+    </div>
+  );
+}
+

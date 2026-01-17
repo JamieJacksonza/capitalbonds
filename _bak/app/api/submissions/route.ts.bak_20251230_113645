@@ -1,0 +1,154 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function toNum(v: any) {
+  const n = typeof v === "string" ? Number(v.replace(/,/g, "")) : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function genDealCode() {
+  const s = Math.random().toString(16).slice(2, 8).toUpperCase();
+  return `SB-${s}`;
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+
+    const applicant = String(body?.applicant || "").trim();
+    const consultant = String(body?.consultant || "").trim();
+    
+    const agentName = String(body?.agent_name ?? body?.agentName ?? body?.agent ?? "").trim() || null;
+const agent_name = String(body?.agent_name || "").trim() || null;
+    const attorney = String(body?.attorney || "").trim() || null;
+    const notes = String(body?.notes || "").trim() || null;
+    const submitted_date =
+      String(body?.submitted_date || "").trim() ||
+      new Date().toISOString().slice(0, 10);
+
+    if (!applicant) return new Response(JSON.stringify({ ok: false, error: "Missing applicant" }), { status: 400 });
+    if (!consultant) return new Response(JSON.stringify({ ok: false, error: "Missing consultant" }), { status: 400 });
+
+    // banks[] preferred, but keep backward compatibility with single bank inputs
+    const banksIn = Array.isArray(body?.banks) ? body.banks : [];
+    const banks =
+      banksIn.length > 0
+        ? banksIn
+        : [{
+            bank_name: body?.bank,
+            amount_zar: body?.amount_zar ?? body?.amount,
+            reference_number: null,
+            contact_name: null,
+            contact_email: null,
+            contact_phone: null,
+            note: null,
+          }];
+
+    const cleanedBanks = banks
+      .map((b: any) => ({
+        bank_name: String(b?.bank_name || "").trim(),
+        amount_zar: toNum(b?.amount_zar ?? b?.amount),
+        reference_number: String(b?.reference_number || "").trim() || null,
+        contact_name: String(b?.contact_name || "").trim() || null,
+        contact_email: String(b?.contact_email || "").trim() || null,
+        contact_phone: String(b?.contact_phone || "").trim() || null,
+        note: String(b?.note || "").trim() || null,
+      }))
+      .filter((b: any) => !!b.bank_name);
+
+    if (cleanedBanks.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "Add at least 1 bank" }), { status: 400 });
+    }
+
+    const totalAmount = cleanedBanks.reduce((s: number, b: any) => s + (toNum(b.amount_zar) || 0), 0);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      return new Response(JSON.stringify({ ok: false, error: "Total amount must be > 0" }), { status: 400 });
+    }
+
+    const deal_code = String(body?.deal_code || "").trim() || genDealCode();
+
+    const primaryBank = cleanedBanks.length === 1 ? cleanedBanks[0].bank_name : "Multiple";
+
+    // 1) Insert deal
+    const { data: deal, error: dealErr } = await supabaseAdmin
+      .from("deals")
+      .insert([{
+        deal_code,
+        applicant,
+        bank: primaryBank,
+        amount_zar: totalAmount,
+        consultant,
+        agent_name,
+        attorney,
+        stage: "submitted",
+        notes,
+        submitted_date,
+      }])
+      .select("*")
+      .maybeSingle();
+
+    if (dealErr) {
+      console.error("SUBMISSIONS_INSERT_DEAL_ERROR:", dealErr);
+      return new Response(JSON.stringify({ ok: false, error: dealErr.message }), { status: 500 });
+    }
+    if (!deal?.id) return new Response(JSON.stringify({ ok: false, error: "Failed to create deal" }), { status: 500 });
+
+    // 2) Insert banks
+    const bankRows = cleanedBanks.map((b: any) => ({
+      deal_id: deal.id,
+      bank_name: b.bank_name,
+      amount_zar: b.amount_zar,
+      reference_number: b.reference_number,
+      contact_name: b.contact_name,
+      contact_email: b.contact_email,
+      contact_phone: b.contact_phone,
+    }));
+
+    const { data: insertedBanks, error: banksErr } = await supabaseAdmin
+      .from("deal_banks")
+      .insert(bankRows)
+      .select("id, bank_name");
+
+    if (banksErr) {
+      console.error("SUBMISSIONS_INSERT_BANKS_ERROR:", banksErr);
+      return new Response(JSON.stringify({ ok: false, error: banksErr.message }), { status: 500 });
+    }
+
+    // 3) Insert submitted-stage notes per bank (optional)
+    const notesRows = (insertedBanks || []).map((ib: any) => {
+      const match = cleanedBanks.find((b: any) => b.bank_name === ib.bank_name);
+      const note = match?.note || null;
+      if (!note) return null;
+      return {
+        deal_bank_id: ib.id,
+        stage: "submitted",
+        note,
+        updated_by: consultant,
+        updated_at: new Date().toISOString(),
+      };
+    }).filter(Boolean);
+
+    if (notesRows.length > 0) {
+      const { error: notesErr } = await supabaseAdmin
+        .from("deal_bank_stage_notes")
+        .upsert(notesRows as any, { onConflict: "deal_bank_id,stage" });
+
+      if (notesErr) {
+        console.error("SUBMISSIONS_UPSERT_NOTES_ERROR:", notesErr);
+        // don't hard fail the whole submission if notes fail
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true, deal, banks: insertedBanks || [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+
+  } catch (e: any) {
+    console.error("SUBMISSIONS_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}
+

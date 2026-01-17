@@ -1,0 +1,23 @@
+﻿import "./globals.css";
+import type { Metadata } from "next";
+import AppTopBar from "./_components/AppTopBar";
+
+export const metadata: Metadata = {
+  title: "Capital Bonds Dashboard",
+  description: "Internal pipeline dashboard for bond applications.",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-[#fafafa] text-black">
+        <AppTopBar />
+        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      </body>
+    </html>
+  );
+}

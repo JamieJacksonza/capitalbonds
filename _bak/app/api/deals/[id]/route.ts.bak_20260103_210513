@@ -1,0 +1,147 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "";
+
+  if (!url || !key) {
+    throw new Error("Missing Supabase env vars (URL/KEY). Check .env.local");
+  }
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function sanitizeDealPatch(input: any) {
+  if (!input || typeof input !== "object") return {};
+  const out: any = { ...input };
+
+  // Strip nested objects that are NOT columns on deals table
+  if ("banks" in out) delete out.banks;
+
+  // Dates: Supabase date columns cannot accept ""
+  const dateKeys = ["submitted_date", "payment_due_date"];
+  for (const k of dateKeys) {
+    if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+  }
+
+  // Timestamps: also cannot accept ""
+  const tsKeys = ["last_moved_at"];
+  for (const k of tsKeys) {
+    if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+  }
+
+  // Numbers: "" -> null, numeric strings -> number
+  const numKeys = ["amount_zar", "amount"];
+  for (const k of numKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) out[k] = Number(v);
+    }
+  }
+
+  // Booleans: "true"/"false" -> boolean, "" -> null
+  const boolKeys = ["agent_comm_paid"];
+  for (const k of boolKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (v === "true") out[k] = true;
+      else if (v === "false") out[k] = false;
+    }
+  }
+
+  // Don't allow client to set server-managed timestamps
+  if ("created_at" in out) delete out.created_at;
+  if ("updated_at" in out) delete out.updated_at;
+
+  return out;
+}
+
+async function getIdFromCtx(ctx: any) {
+  // Next 16+ can give params as a Promise
+  const params = await (ctx as any)?.params;
+  const raw = String(params?.id ?? "").trim();
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch {}
+  return id.trim();
+}
+
+export async function GET(_req: Request, ctx: any) {
+  try {
+    const id = await getIdFromCtx(ctx);
+    if (!id || id === "PASTE-DEAL-ID-HERE") {
+      return NextResponse.json({ error: "Missing deal id" }, { status: 400 });
+    }
+
+    const supabase = getSupabase();
+
+    // Try by UUID first
+    let res = await supabase
+      .from("deals")
+      .select("*, banks(*)")
+      .eq("id", id)
+      .maybeSingle();
+
+    // If not found, try by deal_code (some UIs link by code)
+    if (!res.data && !res.error) {
+      res = await supabase
+        .from("deals")
+        .select("*, banks(*)")
+        .ilike("deal_code", id)
+        .maybeSingle();
+    }
+
+    if (res.error) {
+      return NextResponse.json({ error: res.error.message }, { status: 500 });
+    }
+
+    if (!res.data) {
+      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ deal: res.data }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  try {
+    const id = await getIdFromCtx(ctx);
+    if (!id) return NextResponse.json({ error: "Missing deal id" }, { status: 400 });
+
+    const payload = sanitizeDealPatch(await req.json());
+    const supabase = getSupabase();
+
+    const { data, error } = await supabase
+      .from("deals")
+      .update(payload)
+      .eq("id", id)
+      .select("*, banks(*)")
+      .maybeSingle();
+
+    if (error) {
+      console.error("DEALS_PATCH_SUPABASE_ERROR:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (!data) {
+      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ deal: data }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}

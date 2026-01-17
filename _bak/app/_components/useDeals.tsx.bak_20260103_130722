@@ -1,0 +1,205 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+export type Stage =
+  | "submitted"
+  | "aip"
+  | "instructed"
+  | "granted"
+  | "ntu"
+  | "registrations";
+
+export const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu", "registrations"];
+
+export type Deal = {
+  id: string;
+  stage: Stage;
+  deal_code?: string;
+  applicant?: string;
+  consultant?: string;
+  agent_name?: string;
+  attorney?: string;
+  amount_zar?: number;
+  amount?: number;
+  bank?: string;
+  banks?: any[];
+  [key: string]: any;
+};
+
+type DealsResponse = { ok: boolean; deals?: any[]; error?: string; stale?: boolean };
+
+function toNum(v: any): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v == null) return 0;
+  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function dealAmount(d: any): number {
+  // prefer amount_zar, fallback amount
+  const v = d?.amount_zar ?? d?.amount ?? 0;
+  return toNum(v);
+}
+
+function normKey(v: any): string {
+  const s = String(v ?? "").trim();
+  return s.length ? s : "Unknown";
+}
+
+function sumBy<T>(arr: T[], getVal: (x: T) => number): number {
+  let t = 0;
+  for (const a of arr) t += getVal(a);
+  return t;
+}
+
+function groupTotals(deals: Deal[], keyFn: (d: Deal) => string) {
+  const map: Record<string, { key: string; count: number; total: number }> = {};
+  for (const d of deals) {
+    const key = normKey(keyFn(d));
+    if (!map[key]) map[key] = { key, count: 0, total: 0 };
+    map[key].count += 1;
+    map[key].total += dealAmount(d);
+  }
+  const list = Object.values(map).sort((a, b) => b.total - a.total);
+  return list;
+}
+
+export function useDeals() {
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const refreshAll = useCallback(async () => {
+    controllerRef.current?.abort();
+    const ac = new AbortController();
+    controllerRef.current = ac;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/deals", { cache: "no-store", signal: ac.signal });
+      const data: DealsResponse = await res
+        .json()
+        .catch(() => ({ ok: false, error: "Bad JSON from /api/deals" }));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `GET /api/deals failed (${res.status})`);
+      }
+
+      const list = Array.isArray(data.deals) ? data.deals : [];
+      setDeals(list as Deal[]);
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      // do NOT clear last good data
+      setError(e?.message || "Failed to load deals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  // ---------- Derived dashboard-friendly aggregates ----------
+  const byStage = useMemo(() => {
+    const m: Record<Stage, Deal[]> = {
+      submitted: [],
+      aip: [],
+      instructed: [],
+      granted: [],
+      ntu: [],
+      registrations: [],
+    };
+    for (const d of deals) {
+      const s = (d?.stage as Stage) || "submitted";
+      if (m[s]) m[s].push(d);
+    }
+    return m;
+  }, [deals]);
+
+  const stageCounts = useMemo(() => {
+    const c: Record<Stage, number> = {
+      submitted: byStage.submitted.length,
+      aip: byStage.aip.length,
+      instructed: byStage.instructed.length,
+      granted: byStage.granted.length,
+      ntu: byStage.ntu.length,
+      registrations: byStage.registrations.length,
+    };
+    return c;
+  }, [byStage]);
+
+  const stageTotals = useMemo(() => {
+    const t: Record<Stage, number> = {
+      submitted: sumBy(byStage.submitted, dealAmount),
+      aip: sumBy(byStage.aip, dealAmount),
+      instructed: sumBy(byStage.instructed, dealAmount),
+      granted: sumBy(byStage.granted, dealAmount),
+      ntu: sumBy(byStage.ntu, dealAmount),
+      registrations: sumBy(byStage.registrations, dealAmount),
+    };
+    return t;
+  }, [byStage]);
+
+  const kpisByStage = useMemo(() => {
+    const k: Record<Stage, { count: number; total: number }> = {
+      submitted: { count: stageCounts.submitted, total: stageTotals.submitted },
+      aip: { count: stageCounts.aip, total: stageTotals.aip },
+      instructed: { count: stageCounts.instructed, total: stageTotals.instructed },
+      granted: { count: stageCounts.granted, total: stageTotals.granted },
+      ntu: { count: stageCounts.ntu, total: stageTotals.ntu },
+      registrations: { count: stageCounts.registrations, total: stageTotals.registrations },
+    };
+    return k;
+  }, [stageCounts, stageTotals]);
+
+  const consultantTotals = useMemo(() => groupTotals(deals, (d) => d.consultant), [deals]);
+  const agentTotals = useMemo(() => groupTotals(deals, (d) => d.agent_name), [deals]);
+  const attorneyTotals = useMemo(() => groupTotals(deals, (d) => d.attorney), [deals]);
+
+  // Common aliases (helps existing components without touching them)
+  const totalsByStage = stageTotals;
+  const countsByStage = stageCounts;
+
+  return {
+    // original
+    deals,
+    loading,
+    error,
+    refreshAll,
+
+    // new (dashboard)
+    byStage,
+    stageCounts,
+    stageTotals,
+    kpisByStage,
+
+    consultantTotals,
+    agentTotals,
+    attorneyTotals,
+
+    // aliases (safe + minimal)
+    totalsByStage,
+    countsByStage,
+
+    // per-stage quick fields (some dashboards use direct props)
+    submittedCount: stageCounts.submitted,
+    aipCount: stageCounts.aip,
+    instructedCount: stageCounts.instructed,
+    grantedCount: stageCounts.granted,
+    ntuCount: stageCounts.ntu,
+    registrationsCount: stageCounts.registrations,
+
+    submittedTotal: stageTotals.submitted,
+    aipTotal: stageTotals.aip,
+    instructedTotal: stageTotals.instructed,
+    grantedTotal: stageTotals.granted,
+    ntuTotal: stageTotals.ntu,
+    registrationsTotal: stageTotals.registrations,
+  };
+}

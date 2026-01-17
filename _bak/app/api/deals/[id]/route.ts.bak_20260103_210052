@@ -1,0 +1,47 @@
+function sanitizeDealPatch(input: any) {
+  if (!input || typeof input !== "object") return {};
+  const out: any = { ...input };
+
+  // Strip nested objects that are NOT columns on deals table
+  if ("banks" in out) delete out.banks;
+
+  // Dates: Supabase date columns cannot accept ""
+  const dateKeys = ["submitted_date", "payment_due_date"];
+  for (const k of dateKeys) {
+    if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+  }
+
+  // Timestamps: also don’t accept ""
+  const tsKeys = ["last_moved_at"];
+  for (const k of tsKeys) {
+    if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+  }
+
+  // Numbers: "" -> null, numeric strings -> number
+  const numKeys = ["amount_zar", "amount"];
+  for (const k of numKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) out[k] = Number(v);
+    }
+  }
+
+  // Booleans: "true"/"false" -> boolean, "" -> null
+  const boolKeys = ["agent_comm_paid"];
+  for (const k of boolKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (v === "true") out[k] = true;
+      else if (v === "false") out[k] = false;
+    }
+  }
+
+  // Dont allow client to try set server-managed timestamps
+  if ("created_at" in out) delete out.created_at;
+  if ("updated_at" in out) delete out.updated_at;
+
+  return out;
+}
+

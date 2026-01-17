@@ -1,0 +1,230 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+const CONSULTANTS = ["Kristie", "Elmarie", "Cindy", "Chelsea"] as const;
+
+export default function NewSubmissionPage() {
+  const [applicant, setApplicant] = useState("");
+  const [bank, setBank] = useState("FNB");
+  const [agentName, setAgentName] = useState("");
+  const [amount, setAmount] = useState<string>("");
+  const [notes, setNotes] = useState("");
+
+  const [consultant, setConsultant] = useState<string>(() => {
+    if (typeof window === "undefined") return "Kristie";
+    return localStorage.getItem("cb_user") || "Kristie";
+  });
+
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [createdId, setCreatedId] = useState<string>("");
+
+  const amountNum = useMemo(() => Number(amount), [amount]);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setCreatedId("");
+
+    const cleanApplicant = applicant.trim();
+    const cleanBank = bank.trim();
+    const cleanNotes = notes.trim();
+    const cleanConsultant = consultant.trim();
+    const cleanAgent = agentName.trim();
+
+    if (!cleanApplicant) {
+      setMsg({ type: "err", text: "Applicant is required." });
+      return;
+    }
+    if (!cleanBank) {
+      setMsg({ type: "err", text: "Bank is required." });
+      return;
+    }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setMsg({ type: "err", text: "Amount must be a valid number." });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      // 1) Send to database
+      const res = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          applicant: cleanApplicant,
+          bank: cleanBank,
+          amount: amountNum,
+          notes: cleanNotes,
+          consultant: cleanConsultant,
+          agent_name: cleanAgent || null,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.ok) {
+        const errText = data?.error || `Request failed (${res.status})`;
+        setMsg({ type: "err", text: errText });
+        return;
+      }
+
+      const id = String(data?.record?.id || "");
+      setCreatedId(id);
+
+      // 2) Optional: also create in your in-app pipeline if /api/deals exists
+      try {
+        await fetch("/api/deals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            applicant: cleanApplicant,
+            bank: cleanBank,
+            amount: amountNum,
+            notes: cleanNotes,
+            consultant: cleanConsultant,
+            agent_name: cleanAgent || null,
+            stage: "submitted",
+            status: "Submitted",
+            submitted: new Date().toISOString().slice(0, 10),
+          }),
+        });
+      } catch {}
+
+      setMsg({ type: "ok", text: "Submission sent successfully (and written to database)." });
+
+      // Reset form
+      setApplicant("");
+      setAmount("");
+      setNotes("");
+      setAgentName("");
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Something went wrong submitting." });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-8 px-6 py-10">
+      <header className="space-y-2">
+        <div className="text-xs font-extrabold text-black/60">Submitted</div>
+        <h1 className="text-3xl font-extrabold tracking-tight text-black">New Submission</h1>
+        <p className="text-sm font-semibold text-black/70">
+          This creates a new submission and appends it to your database.
+        </p>
+      </header>
+
+      <form onSubmit={onSubmit} className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm space-y-5">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="text-xs font-extrabold text-black">Applicant</div>
+            <input
+              value={applicant}
+              onChange={(e) => setApplicant(e.target.value)}
+              placeholder="e.g. John Smith"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Consultant</div>
+            <select
+              value={consultant}
+              onChange={(e) => {
+                setConsultant(e.target.value);
+                try { localStorage.setItem("cb_user", e.target.value); } catch {}
+              }}
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            >
+              {CONSULTANTS.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Agent (optional)</div>
+            <input
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              placeholder="e.g. Thabo M."
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Bank</div>
+            <select
+              value={bank}
+              onChange={(e) => setBank(e.target.value)}
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            >
+              <option value="FNB">FNB</option>
+              <option value="Standard Bank">Standard Bank</option>
+              <option value="ABSA">ABSA</option>
+              <option value="Nedbank">Nedbank</option>
+              <option value="Capitec">Capitec</option>
+              <option value="Investec">Investec</option>
+              <option value="Discovery Bank">Discovery Bank</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-2">
+            <div className="text-xs font-extrabold text-black">Amount (ZAR)</div>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="numeric"
+              placeholder="e.g. 450000"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs font-extrabold text-black">Notes</div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Anything important..."
+            className="mt-2 min-h-[120px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+          />
+        </div>
+
+        {msg && (
+          <div className="rounded-2xl border border-black/10 bg-white p-4">
+            <div className="text-sm font-extrabold text-black">{msg.text}</div>
+            {createdId && (
+              <div className="mt-2 text-xs font-bold text-black/60">
+                Reference: <span className="text-black">{createdId}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting ? "Submitting..." : "Submit to database"}
+          </button>
+
+          <Link
+            href="/submitted"
+            className="rounded-2xl border border-black/10 bg-white px-5 py-3 text-sm font-extrabold text-black hover:border-black/20"
+          >
+            Back to Submitted
+          </Link>
+        </div>
+      </form>
+    </div>
+  );
+}

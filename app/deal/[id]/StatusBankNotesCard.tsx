@@ -1,0 +1,227 @@
+﻿"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+
+type Props = {
+  dealKey: string;
+  amountZar?: number | null;
+  stage?: string | null;
+  hideEmptyNotes?: boolean;
+};
+
+type BankApiRow = {
+  id?: string | number | null;
+  bank_name?: string | null;
+  bank_notes?: string | null;
+};
+
+const BANKS = [
+  { key: "FNB", label: "FNB" },
+  { key: "ABSA", label: "ABSA" },
+  { key: "Standard Bank", label: "Standard Bank" },
+  { key: "Nedbank", label: "Nedbank" },
+  { key: "Investec", label: "Investec" },
+  { key: "Other", label: "Other" },
+] as const;
+
+type BankKey = (typeof BANKS)[number]["key"];
+
+function normBankName(v: any): BankKey | null {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return null;
+
+  if (s.includes("fnb")) return "FNB";
+  if (s.includes("absa")) return "ABSA";
+  if (s.includes("standard")) return "Standard Bank";
+  if (s.includes("ned")) return "Nedbank";
+  if (s.includes("investec")) return "Investec";
+  if (s.includes("other")) return "Other";
+
+  return "Other";
+}
+
+function moneyZar(n: number) {
+  try {
+    return "R " + Math.round(n).toLocaleString("en-ZA");
+  } catch {
+    return "R " + String(Math.round(n));
+  }
+}
+
+export default function StatusBankNotesCard({ dealKey, amountZar, stage, hideEmptyNotes }: Props) {
+  const key = useMemo(() => String(dealKey ?? "").trim(), [dealKey]);
+  const stageKey = useMemo(() => "global", []);
+const [rows, setRows] = useState<
+    Record<BankKey, { id?: string; bank_name: BankKey; note: string }>
+  >(() => {
+    const base: any = {};
+    for (const b of BANKS) base[b.key] = { bank_name: b.key, note: "", id: undefined };
+    return base;
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const amountLine =
+    typeof amountZar === "number" && Number.isFinite(amountZar) ? moneyZar(amountZar) : null;
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      if (!key) return;
+      setLoading(true);
+      setMsg(null);
+
+      try {
+        const url = `/api/deals/${encodeURIComponent(key)}/bank-notes?stage=${encodeURIComponent(stageKey)}`;
+        const res = await fetch(url, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load bank notes");
+
+        const apiBanks: BankApiRow[] = Array.isArray(json?.rows) ? json.rows : [];
+
+        const next: any = {};
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: "", id: undefined };
+
+        for (const r of apiBanks) {
+          const name = normBankName(r?.bank_name);
+          if (!name) continue;
+          next[name] = {
+            bank_name: name,
+            note: String(r?.bank_notes ?? "").trim(),
+            id: r?.id ? String(r.id) : undefined,
+          };
+        }
+
+        if (alive) setRows(next);
+      } catch (e: any) {
+        if (alive) setMsg({ type: "err", text: e?.message || "Failed to load bank notes" });
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [key, stageKey]);
+
+  async function save() {
+  if (!key) return;
+  setSaving(true);
+  setMsg(null);
+
+  const payload = {
+    dealId: key,
+    stage: stageKey,
+    rows: BANKS.map((b) => {
+      const r = rows[b.key];
+      return {
+        bank_name: b.key,
+        bank_notes: String(r?.note ?? "").trim(),
+      };
+    }),
+  };
+
+  try {
+    const res = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to save bank notes");
+
+    setMsg({ type: "ok", text: "Saved." });
+  } catch (e: any) {
+    setMsg({ type: "err", text: e?.message || "Failed to save." });
+  } finally {
+    setSaving(false);
+  }
+}
+
+return (
+    <div className="rounded-2xl border border-black/10 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Bank notes</div>
+          <div className="mt-1 text-[11px] font-semibold text-black/60">
+            Stage: <span className="font-extrabold text-black/80">All stages</span>
+            {amountLine ? (
+              <>
+                {" "}
+                 Amount: <span className="font-extrabold text-black/80">{amountLine}</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || loading}
+          className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20 disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+
+      {msg ? (
+        <div
+          className={
+            "mt-3 rounded-2xl border px-3 py-2 text-xs font-semibold " +
+            (msg.type === "ok"
+              ? "border-black/10 bg-black/[0.02] text-black"
+              : "border-black/20 bg-black/[0.03] text-black")
+          }
+        >
+          {msg.text}
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+        {BANKS.filter((b) => {
+          if (!hideEmptyNotes) return true;
+          const note = String(rows[b.key]?.note ?? "").trim();
+          return Boolean(note);
+        }).map((b) => (
+          <div key={b.key} className="rounded-2xl border border-black/10 bg-white p-3">
+            <div className="text-xs font-extrabold text-black/70">{b.label}</div>
+            <textarea
+              value={rows[b.key]?.note ?? ""}
+              onChange={(e) =>
+                setRows((prev) => ({
+                  ...prev,
+                  [b.key]: {
+                    ...(prev[b.key] || { bank_name: b.key, note: "" }),
+                    note: e.target.value,
+                  },
+                }))
+              }
+              placeholder="Add bank notes..."
+              className="mt-2 h-28 w-full resize-none rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="mt-4 text-xs font-semibold text-black/60">Loading bank notes…</div>
+      ) : null}
+    </div>
+  );
+}
+
+
+
+
+
+
+
+
+
+

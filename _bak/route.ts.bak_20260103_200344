@@ -1,0 +1,96 @@
+export const runtime = "nodejs";
+
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function supabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY_OLD ||
+    "";
+
+  if (!url || !key) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env");
+  }
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+export async function PATCH(req: Request) {
+  const id = getIdFromUrl(req);
+  if (!id) {
+    return new Response(JSON.stringify({ ok: false, error: "Missing id" }), { status: 400 });
+  }
+
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ ok: false, error: "Invalid JSON body" }), { status: 400 });
+  }
+
+  const toStage = String(body?.toStage || "").trim();
+  const movedBy = String(body?.movedBy || "").trim();
+  const note = String(body?.note || "").trim();
+
+  if (!toStage) {
+    return new Response(JSON.stringify({ ok: false, error: "Missing toStage" }), { status: 400 });
+  }
+
+  const nowIso = new Date().toISOString();
+
+  // IMPORTANT: we do NOT update any bankNotes column (it doesn't exist)
+  // and we do NOT touch any banks table here (deadline mode).
+  const update: any = {
+    stage: toStage,
+    notes: note || "",
+    last_moved_by: movedBy || null,
+    last_moved_at: nowIso,
+  };
+
+  // Only when moving to registrations, allow these fields
+  if (toStage === "registrations") {
+    const r = body?.registration || {};
+    update.registration_number = r.registration_number ?? null;
+    update.registration_attorney = r.registration_attorney ?? null;
+    update.registration_attorney_tel = r.registration_attorney_tel ?? null;
+    update.registration_attorney_contact = r.registration_attorney_contact ?? null;
+    update.agent_comm_paid = r.agent_comm_paid ?? null;
+    update.payment_due_date = r.payment_due_date ?? null;
+  }
+
+  try {
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("deals")
+      .update(update)
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("DEALS_PATCH_SUPABASE_ERROR:", error);
+      return new Response(JSON.stringify({ ok: false, error: error.message, details: error.details || "" }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify({ ok: true, deal: data }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  } catch (e: any) {
+    console.error("DEALS_PATCH_FATAL:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Patch failed" }), { status: 500 });
+  }
+}

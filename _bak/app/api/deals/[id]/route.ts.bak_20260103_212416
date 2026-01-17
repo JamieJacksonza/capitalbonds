@@ -1,0 +1,146 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "";
+
+  if (!url || !key) throw new Error("Missing Supabase env vars (URL/KEY). Check .env.local");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function sanitizeDealPatch(input: any) {
+  if (!input || typeof input !== "object") return {};
+  const out: any = { ...input };
+
+  // never accept nested objects for deals update
+  if ("banks" in out) delete out.banks;
+
+  // date columns can't accept ""
+  const dateKeys = ["submitted_date", "payment_due_date"];
+  for (const k of dateKeys) if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+
+  // timestamps can't accept ""
+  const tsKeys = ["last_moved_at"];
+  for (const k of tsKeys) if (k in out && (out[k] === "" || out[k] === undefined)) out[k] = null;
+
+  // numbers
+  const numKeys = ["amount_zar", "amount"];
+  for (const k of numKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) out[k] = Number(v);
+    }
+  }
+
+  // booleans
+  const boolKeys = ["agent_comm_paid"];
+  for (const k of boolKeys) {
+    if (k in out) {
+      const v = out[k];
+      if (v === "" || v === undefined) out[k] = null;
+      else if (v === "true") out[k] = true;
+      else if (v === "false") out[k] = false;
+    }
+  }
+
+  // dont allow client to set server-managed timestamps
+  if ("created_at" in out) delete out.created_at;
+  if ("updated_at" in out) delete out.updated_at;
+
+  return out;
+}
+
+async function getIdFromCtx(ctx: any) {
+  // Next 16+ sometimes gives params as a Promise
+  const params = await (ctx as any)?.params;
+  const raw = String(params?.id ?? "").trim();
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch {}
+  return id.trim();
+}
+
+async function loadBanks(supabase: any, dealId: string) {
+  // Try common table names. We'll keep going if a table doesn't exist.
+  const candidates = ["banks", "deal_banks", "dealBanks"];
+  let lastErr: any = null;
+
+  for (const table of candidates) {
+    const r = await supabase.from(table).select("*").eq("deal_id", dealId);
+    if (!r.error) return { table, rows: r.data ?? [] };
+    lastErr = r.error;
+
+    const msg = String(r.error?.message ?? "");
+    // if the table doesn't exist, try next candidate
+    if (msg.toLowerCase().includes("does not exist") || msg.toLowerCase().includes("relation")) continue;
+
+    // otherwise stop and surface the error
+    return { table, rows: [], error: r.error };
+  }
+
+  return { table: candidates[0], rows: [], error: lastErr };
+}
+
+export async function GET(_req: Request, ctx: any) {
+  try {
+    const id = await getIdFromCtx(ctx);
+    if (!id || id === "PASTE-DEAL-ID-HERE") return NextResponse.json({ error: "Missing deal id" }, { status: 400 });
+
+    const supabase = getSupabase();
+
+    // 1) fetch deal (by uuid)
+    let dealRes = await supabase.from("deals").select("*").eq("id", id).maybeSingle();
+
+    // 2) fallback: by deal_code
+    if (!dealRes.data && !dealRes.error) {
+      dealRes = await supabase.from("deals").select("*").ilike("deal_code", id).maybeSingle();
+    }
+
+    if (dealRes.error) return NextResponse.json({ error: dealRes.error.message }, { status: 500 });
+    if (!dealRes.data) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+
+    const deal = dealRes.data;
+
+    // 3) fetch banks separately (no FK relationship required)
+    const banksRes = await loadBanks(supabase, deal.id);
+
+    const merged = { ...deal, banks: banksRes.rows };
+    return NextResponse.json({ deal: merged, banks_source: banksRes.table }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  try {
+    const id = await getIdFromCtx(ctx);
+    if (!id) return NextResponse.json({ error: "Missing deal id" }, { status: 400 });
+
+    const payload = sanitizeDealPatch(await req.json());
+    const supabase = getSupabase();
+
+    const upd = await supabase.from("deals").update(payload).eq("id", id).select("*").maybeSingle();
+    if (upd.error) {
+      console.error("DEALS_PATCH_SUPABASE_ERROR:", upd.error);
+      return NextResponse.json({ error: upd.error.message }, { status: 500 });
+    }
+    if (!upd.data) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+
+    const banksRes = await loadBanks(supabase, upd.data.id);
+    const merged = { ...upd.data, banks: banksRes.rows };
+
+    return NextResponse.json({ deal: merged, banks_source: banksRes.table }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+  }
+}

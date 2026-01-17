@@ -1,0 +1,18 @@
+﻿export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function POST(req: Request) {
+  // forward to /api/moves
+  const body = await req.text();
+  const res = await fetch(new URL("/api/moves", req.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    cache: "no-store",
+  });
+  return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+}
+
+export async function PATCH(req: Request) {
+  return POST(req);
+}

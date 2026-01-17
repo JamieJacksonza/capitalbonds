@@ -1,0 +1,264 @@
+﻿param(
+  [string]$File = ".\app\deal\[id]\StatusBankNotesCard.tsx"
+)
+
+$dir = Split-Path -Parent $File
+if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+
+# Backup if helper exists
+if (Test-Path ".\scripts\backup-helper.ps1") {
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force | Out-Null
+  . .\scripts\backup-helper.ps1
+  if (Get-Command Backup-File -ErrorAction SilentlyContinue -ErrorAction SilentlyContinue) {
+    Backup-File -Path $File | Out-Null
+  }
+}
+
+$content = @"
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type BankApiRow = {
+  id: string;
+  bank_name: string;
+  bank_notes: string | null;
+};
+
+type Props = {
+  dealKey: string;
+  amountZar: number;
+  stage?: string;
+};
+
+function money(n: number) {
+  const v = Number(n || 0);
+  return "R " + v.toLocaleString("en-ZA");
+}
+
+function normBankName(v: any) {
+  return String(v ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+const BANKS = [
+  { key: "FNB", label: "FNB" },
+  { key: "ABSA", label: "ABSA" },
+  { key: "NEDBANK", label: "NEDBANK" },
+  { key: "STANDARD BANK", label: "STANDARD BANK" },
+  { key: "INVESTEC", label: "INVESTEC" },
+  { key: "OTHER", label: "OTHER" },
+] as const;
+
+type BankKey = (typeof BANKS)[number]["key"];
+
+export default function StatusBankNotesCard({ dealKey, amountZar, stage }: Props) {
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // store id (if exists) + editable note for EACH bank column (always)
+  const [rows, setRows] = useState<Record<BankKey, { id?: string; bank_name: string; note: string }>>(() => {
+    const base: any = {};
+    for (const b of BANKS) base[b.key] = { bank_name: b.key, note: "" };
+    return base;
+  });
+
+  const title = useMemo(() => "STATUS", []);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setErr(null);
+
+        const key = String(dealKey || "").trim();
+        if (!key) {
+          setErr("Missing deal id/deal_code");
+          setLoading(false);
+          return;
+        }
+
+        const res = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load bank notes");
+
+        const apiBanks: BankApiRow[] = Array.isArray(json?.banks) ? json.banks : [];
+
+        // start with empty editable rows for ALL banks
+        const next: any = {};
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: "", id: undefined };
+
+        // map any existing bank rows into the fixed columns
+        for (const r of apiBanks) {
+          const name = normBankName(r?.bank_name);
+          const note = String(r?.bank_notes ?? "").trim();
+          const id = r?.id ? String(r.id) : undefined;
+
+          // Exact match preferred (since we save standardized names)
+          const hit = BANKS.find((b) => b.key === name);
+          if (hit) {
+            next[hit.key] = { bank_name: hit.key, note, id };
+            continue;
+          }
+
+          // If some older data had variants, try a few common normalizations
+          if (name.includes("STANDARD") && name.includes("BANK")) {
+            next["STANDARD BANK"] = { bank_name: "STANDARD BANK", note, id };
+            continue;
+          }
+
+          // Anything unknown goes into OTHER (append)
+          if (note) {
+            const prev = String(next["OTHER"]?.note ?? "");
+            const line = `${name}: ${note}`;
+            next["OTHER"].note = prev ? (prev + "\n" + line) : line;
+          }
+          if (id && !next["OTHER"]?.id) next["OTHER"].id = id;
+        }
+
+        if (!alive) return;
+        setRows(next);
+      } catch (e: any) {
+        if (!alive) return;
+        setErr(e?.message || "Failed to load bank notes");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [dealKey]);
+
+  function setNote(k: BankKey, v: string) {
+    setRows((p) => ({
+      ...p,
+      [k]: { ...(p[k] || { bank_name: k }), note: v },
+    }));
+  }
+
+  async function save() {
+    try {
+      setBusy(true);
+      setErr(null);
+
+      const key = String(dealKey || "").trim();
+      if (!key) throw new Error("Missing deal id/deal_code");
+
+      const payload = {
+        stage: String(stage || "").trim().toLowerCase() || "submitted",
+        bankNotes: BANKS.map((b) => {
+          const r = rows[b.key];
+          return {
+            bankId: r?.id ?? null,              // update if exists
+            id: r?.id ?? null,                  // compatibility
+            bank_name: b.key,                   // IMPORTANT: standardized name
+            bankName: b.key,
+            note: String(r?.note ?? ""),
+          };
+        }),
+      };
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || `Failed to save (${res.status})`);
+
+      // Reload to pick up ids created on the server
+      const reload = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, { cache: "no-store" });
+      const reloadJson = await reload.json().catch(() => ({} as any));
+      if (reload.ok && reloadJson?.ok && Array.isArray(reloadJson?.banks)) {
+        const apiBanks: BankApiRow[] = reloadJson.banks;
+
+        const next: any = {};
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: String(rows[b.key]?.note ?? ""), id: rows[b.key]?.id };
+
+        for (const r of apiBanks) {
+          const name = normBankName(r?.bank_name);
+          const id = r?.id ? String(r.id) : undefined;
+          const note = String(r?.bank_notes ?? "").trim();
+
+          const hit = BANKS.find((b) => b.key === name);
+          if (hit) next[hit.key] = { bank_name: hit.key, note, id };
+        }
+
+        setRows(next);
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Failed to save bank notes");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-6 overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-black/10 px-6 py-5">
+        <div>
+          <div className="text-xs font-extrabold tracking-wide text-black/50">{title}</div>
+          <div className="mt-1 text-lg font-extrabold text-black">Bank notes by bank (editable)</div>
+        </div>
+
+        <button
+          onClick={save}
+          disabled={busy || loading}
+          className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "Saving..." : "Save"}
+        </button>
+      </div>
+
+      {err ? (
+        <div className="px-6 py-4 text-sm font-semibold text-red-600">{err}</div>
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1300px] text-left">
+          <thead className="border-b border-black/10 bg-white">
+            <tr className="text-xs font-extrabold text-black/70">
+              <th className="px-6 py-4">Amount</th>
+              {BANKS.map((b) => (
+                <th key={b.key} className="px-6 py-4">{b.label}</th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr className="align-top">
+              <td className="px-6 py-6">
+                <div className="text-2xl font-extrabold text-black">{money(amountZar)}</div>
+              </td>
+
+              {BANKS.map((b) => (
+                <td key={b.key} className="px-6 py-6">
+                  <textarea
+                    value={String(rows[b.key]?.note ?? "")}
+                    onChange={(e) => setNote(b.key, e.target.value)}
+                    placeholder=""
+                    className="h-28 w-[220px] resize rounded-2xl border border-black/10 bg-white p-4 text-sm font-semibold text-black outline-none focus:border-black/20"
+                  />
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+"@
+
+Set-Content -LiteralPath $File -Value $content -Encoding UTF8
+Write-Host "Wrote:" -ForegroundColor Green
+Write-Host "  $File" -ForegroundColor Green

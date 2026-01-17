@@ -1,0 +1,86 @@
+import { createClient } from "@supabase/supabase-js";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type Stage = typeof ALLOWED[number];
+
+function supaAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    "";
+
+  if (!url || !key) {
+    throw new Error(
+      "Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)."
+    );
+  }
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function normStage(v: any): Stage {
+  const s = String(v || "").trim().toLowerCase();
+  return (ALLOWED as readonly string[]).includes(s) ? (s as Stage) : "submitted";
+}
+
+async function handler(req: Request, ctx: { params: { id: string } }) {
+  try {
+    const dealId = String(ctx?.params?.id || "").trim();
+    if (!dealId) return new Response(JSON.stringify({ ok: false, error: "Missing deal id" }), { status: 400 });
+
+    const supabase = supaAdmin();
+    const body = await req.json().catch(() => ({}));
+
+    const stage = normStage(body?.stage);
+    const list = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+
+    // Each item can be:
+    // { bankId, note, attorney, attorney_note }
+    // also accept older keys just in case
+    for (const item of list) {
+      const bankId = String(item?.bankId ?? item?.id ?? "").trim();
+      if (!bankId) continue;
+
+      const bank_notes = String(
+        item?.note ?? item?.bank_notes ?? item?.bankNotes ?? ""
+      ).trim() || null;
+
+      const attorney = String(item?.attorney ?? item?.firm ?? "").trim() || null;
+
+      const attorney_note = String(
+        item?.attorney_note ?? item?.attorneyNote ?? item?.attorney_notes ?? ""
+      ).trim() || null;
+
+      const { error } = await supabase
+        .from("deal_banks")
+        .update({
+          bank_notes,
+          attorney,
+          attorney_note,
+          // optional: keep a hint of when/where it was updated
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", bankId)
+        .eq("deal_id", dealId);
+
+      if (error) {
+        return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true, stage }), { status: 200 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Failed to update bank notes" }), { status: 500 });
+  }
+}
+
+export async function POST(req: Request, ctx: { params: { id: string } }) {
+  return handler(req, ctx);
+}
+
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  return handler(req, ctx);
+}

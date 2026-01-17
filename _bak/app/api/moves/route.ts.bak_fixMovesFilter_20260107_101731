@@ -1,0 +1,159 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const API_BUILD = "2026-01-04_moves_read_write_v6";
+
+function json(data: any, status = 200) {
+  return NextResponse.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" },
+  });
+}
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!url) throw new Error("Missing SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL");
+  if (!key) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY (restart dev server after setting .env.local)");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function mapRow(a: any) {
+  return {
+    ...a,
+    dealId: a.deal_id,
+    dealCode: a.deal_code,
+    fromStage: a.from_stage,
+    toStage: a.to_stage,
+    movedBy: a.moved_by,
+    movedAt: a.moved_at,
+    createdAt: a.created_at,
+  };
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+const STAGES_ALLOWED = new Set(["submitted","aip","instructed","granted","ntu","registrations"]);
+
+function normStage(v: any) {
+  if (v === "" || v === undefined || v === null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (s === "registration" || s === "regs" || s === "reg") return "registrations";
+  if (s === "instructions" || s === "instruct") return "instructed";
+  if (s === "grant" || s === "approved") return "granted";
+  return s || null;
+}
+
+async function safeJson(req: Request) {
+  const raw = await req.text();
+  if (!raw) return { body: {}, raw: "" };
+  try { return { body: JSON.parse(raw), raw }; }
+  catch { return { body: null as any, raw }; }
+}
+
+async function resolveDealId(supabase: any, keyRaw: string) {
+  const key = String(keyRaw || "").trim();
+  if (!key) return null;
+  if (isUuid(key)) return key;
+
+  let r = await supabase.from("deals").select("id").eq("deal_code", key).maybeSingle();
+  if (!r.data && !r.error) {
+    r = await supabase.from("deals").select("id").ilike("deal_code", key).maybeSingle();
+  }
+  if (r.error) throw new Error(r.error.message);
+  return r.data?.id ?? null;
+}
+
+export async function GET(req: Request) {
+  try {
+    const supabase = getSupabase();
+    const url = new URL(req.url);
+
+    const limitRaw = url.searchParams.get("limit") || "200";
+    const limit = Math.min(Math.max(parseInt(limitRaw, 10) || 200, 1), 1000);
+    const dealCode = (url.searchParams.get("deal_code") || url.searchParams.get("dealCode") || "").trim();
+
+    let q = supabase.from("deal_activity").select("*").order("moved_at", { ascending: false }).limit(limit);
+    if (dealCode) q = q.eq("deal_code", dealCode);
+
+    const r = await q;
+    if (r.error) return json({ api_build: API_BUILD, ok: false, error: r.error.message }, 500);
+
+    const moves = (r.data ?? []).map(mapRow);
+    return json({ api_build: API_BUILD, ok: true, moves, items: moves, count: moves.length }, 200);
+  } catch (e: any) {
+    return json({ api_build: API_BUILD, ok: false, error: e?.message ?? "Unknown error" }, 500);
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const supabase = getSupabase();
+    const parsed = await safeJson(req);
+
+    if (parsed.body === null) {
+      return json({ api_build: API_BUILD, ok: false, error: "Invalid JSON body", received: parsed.raw.slice(0, 200) }, 400);
+    }
+
+    const body: any = parsed.body || {};
+    const dealKey = body.dealId ?? body.deal_id ?? body.id ?? body.dealCode ?? body.deal_code ?? body.code ?? body.deal;
+    const toStage = normStage(body.toStage ?? body.to_stage ?? body.nextStage ?? body.next_stage ?? body.stage);
+    const movedBy = String(body.movedBy ?? body.moved_by ?? body.actor ?? "system").trim() || "system";
+    const note = String(body.note ?? "").trim() || null;
+
+    if (!dealKey) return json({ api_build: API_BUILD, ok: false, error: "Missing deal id/code in body" }, 400);
+    if (!toStage) return json({ api_build: API_BUILD, ok: false, error: "Missing toStage/nextStage/stage in body" }, 400);
+    if (!STAGES_ALLOWED.has(toStage)) {
+      return json({ api_build: API_BUILD, ok: false, error: `Invalid stage '${toStage}'. Allowed: ${Array.from(STAGES_ALLOWED).join(", ")}` }, 400);
+    }
+
+    const dealId = await resolveDealId(supabase, String(dealKey));
+    if (!dealId) return json({ api_build: API_BUILD, ok: false, error: "Deal not found", key: String(dealKey) }, 404);
+
+    const before = await supabase.from("deals").select("id, deal_code, stage").eq("id", dealId).maybeSingle();
+    if (before.error) return json({ api_build: API_BUILD, ok: false, error: before.error.message }, 500);
+    if (!before.data) return json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, 404);
+
+    const movedAt = new Date().toISOString();
+
+    const upd = await supabase
+      .from("deals")
+      .update({ stage: toStage, last_moved_by: movedBy, last_moved_at: movedAt })
+      .eq("id", dealId)
+      .select("*")
+      .maybeSingle();
+
+    if (upd.error) return json({ api_build: API_BUILD, ok: false, error: upd.error.message }, 500);
+    if (!upd.data) return json({ api_build: API_BUILD, ok: false, error: "Deal not found" }, 404);
+
+    const fromStage = normStage(before.data.stage) ?? toStage;
+
+    if (fromStage !== toStage) {
+      const ins = await supabase.from("deal_activity").insert({
+        deal_id: upd.data.id,
+        deal_code: upd.data.deal_code,
+        from_stage: fromStage,
+        to_stage: toStage,
+        moved_by: movedBy,
+        moved_at: movedAt,
+        note,
+        actor: movedBy,
+        action: "move",
+      });
+
+      if (ins.error) {
+        return json({ api_build: API_BUILD, ok: false, error: "Stage changed but activity insert failed", detail: ins.error.message }, 500);
+      }
+    }
+
+    return json({ api_build: API_BUILD, ok: true, deal: upd.data }, 200);
+  } catch (e: any) {
+    return json({ api_build: API_BUILD, ok: false, error: e?.message ?? "Unknown error" }, 500);
+  }
+}

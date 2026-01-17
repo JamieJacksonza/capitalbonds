@@ -1,0 +1,336 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useDeals } from "../../_components/useDeals";
+import { STAGES, stageMeta, type Stage } from "../../lib/deals";
+import { getCurrentUserClient } from "../../lib/user";
+
+const money = (n: number) =>
+  new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(n);
+
+function cls(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+export default function ConsultantPage() {
+  const router = useRouter();
+  const params = useParams<{ name?: string | string[] }>();
+  const raw = params?.name;
+
+  const consultantName = useMemo(() => {
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    return decodeURIComponent(String(v || "")).trim();
+  }, [raw]);
+
+  const { deals, moveDealToStage } = useDeals();
+
+  const [stageFilter, setStageFilter] = useState<Stage | "all">("all");
+  const [q, setQ] = useState("");
+  const [moveMsg, setMoveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const consultantDeals = useMemo(() => {
+    if (!consultantName) return [];
+    return deals.filter((d) => String(d.consultant || "").trim() === consultantName);
+  }, [deals, consultantName]);
+
+  const counts = useMemo(() => {
+    const map: Record<Stage, number> = {
+      submitted: 0,
+      aip: 0,
+      instructed: 0,
+      granted: 0,
+      ntu: 0,
+    };
+    for (const d of consultantDeals) map[d.stage] = (map[d.stage] || 0) + 1;
+    return map;
+  }, [consultantDeals]);
+
+  const grantedValue = useMemo(() => {
+    return consultantDeals
+      .filter((d) => d.stage === "granted")
+      .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  }, [consultantDeals]);
+
+  const filteredDeals = useMemo(() => {
+    const query = q.trim().toLowerCase();
+
+    return consultantDeals
+      .filter((d) => (stageFilter === "all" ? true : d.stage === stageFilter))
+      .filter((d) => {
+        if (!query) return true;
+        const hay = [
+          d.id,
+          d.applicant,
+          d.bank,
+          d.status,
+          d.notes || "",
+          d.stage,
+          d.submitted,
+          d.grantedAt || "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(query);
+      })
+      .sort((a, b) => {
+        const ad = (a.grantedAt || a.submitted || "").slice(0, 10);
+        const bd = (b.grantedAt || b.submitted || "").slice(0, 10);
+        return bd.localeCompare(ad);
+      });
+  }, [consultantDeals, stageFilter, q]);
+
+  function onMove(dealId: string, next: Stage) {
+    try {
+      const by = getCurrentUserClient();
+      moveDealToStage(dealId, next, { by });
+
+      setMoveMsg({
+        type: "ok",
+        text: `Moved ${dealId} to ${stageMeta[next].title} (by ${by})`,
+      });
+      setTimeout(() => setMoveMsg(null), 1800);
+    } catch (e: any) {
+      setMoveMsg({ type: "err", text: e?.message || "Failed to move deal" });
+      setTimeout(() => setMoveMsg(null), 2200);
+    }
+  }
+
+  if (!consultantName) {
+    return (
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+          <div className="text-lg font-extrabold text-black">Consultant not found</div>
+          <p className="mt-2 text-sm font-semibold text-black/80">
+            The consultant name in the URL is missing.
+          </p>
+          <div className="mt-4">
+            <Link
+              href="/"
+              className="rounded-xl bg-black px-4 py-3 text-xs font-extrabold text-white hover:opacity-90"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const chips: Array<{ key: Stage | "all"; label: string; count: number }> = [
+    { key: "all", label: "All", count: consultantDeals.length },
+    { key: "submitted", label: "Submitted", count: counts.submitted },
+    { key: "aip", label: "AIP", count: counts.aip },
+    { key: "instructed", label: "Instructed", count: counts.instructed },
+    { key: "granted", label: "Granted", count: counts.granted },
+    { key: "ntu", label: "NTU", count: counts.ntu },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/70">Consultant</div>
+          <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-black">
+            {consultantName}
+          </h1>
+          <p className="mt-2 text-sm font-semibold text-black/80">
+            Full deal list + stage breakdown + granted value.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/"
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Back to Dashboard
+          </Link>
+
+          <button
+            onClick={() => router.push("/submitted/new")}
+            className="rounded-xl bg-black px-3 py-2 text-xs font-extrabold text-white hover:opacity-90"
+          >
+            New submission
+          </button>
+        </div>
+      </header>
+
+      {moveMsg && (
+        <div
+          className={cls(
+            "rounded-2xl border p-4 text-sm font-extrabold",
+            moveMsg.type === "ok"
+              ? "border-black/10 bg-black/[0.03] text-black"
+              : "border-red-200 bg-red-50 text-red-700"
+          )}
+        >
+          {moveMsg.text}
+        </div>
+      )}
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+          <div className="text-xs font-extrabold text-black">Total deals</div>
+          <div className="mt-2 text-4xl font-extrabold tracking-tight text-black">
+            {consultantDeals.length}
+          </div>
+          <div className="mt-2 text-sm font-semibold text-black/80">All stages</div>
+        </div>
+
+        {STAGES.map((s) => (
+          <div key={s} className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+            <div className="text-xs font-extrabold text-black">{stageMeta[s].title}</div>
+            <div className="mt-2 text-4xl font-extrabold tracking-tight text-black">
+              {counts[s] || 0}
+            </div>
+            <div className="mt-2 text-sm font-semibold text-black/80">
+              {stageMeta[s].description}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-lg font-extrabold text-black">Granted value (ZAR)</div>
+            <div className="mt-1 text-sm font-semibold text-black/80">
+              Sum of all deals currently in <span className="font-extrabold text-black">Granted</span>.
+            </div>
+          </div>
+
+          <div className="text-2xl font-extrabold tracking-tight text-black">
+            {new Intl.NumberFormat("en-ZA", {
+              style: "currency",
+              currency: "ZAR",
+              maximumFractionDigits: 0,
+            }).format(grantedValue)}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm space-y-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {chips.map((c) => (
+              <button
+                key={c.key}
+                onClick={() => setStageFilter(c.key)}
+                className={cls(
+                  "rounded-xl px-3 py-2 text-xs font-extrabold border transition",
+                  stageFilter === c.key
+                    ? "bg-black text-white border-black"
+                    : "bg-white text-black border-black/10 hover:bg-black/[0.03]"
+                )}
+              >
+                {c.label}{" "}
+                <span className={cls("ml-1", stageFilter === c.key ? "text-white/90" : "text-black/70")}>
+                  ({c.count})
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="w-full lg:max-w-sm">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search ID, applicant, bank, notes, status..."
+              className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-black/10">
+          <table className="min-w-full bg-white">
+            <thead className="bg-black/[0.03]">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">ID</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Applicant</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Bank</th>
+                <th className="px-4 py-3 text-right text-xs font-extrabold text-black">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Stage</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Submitted</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Granted At</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredDeals.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-6 text-sm font-semibold text-black/80">
+                    No deals match your filters.
+                  </td>
+                </tr>
+              ) : (
+                filteredDeals.map((d) => (
+                  <tr key={d.id} className="border-t border-black/10 hover:bg-black/[0.02]">
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/deal-by-code/${encodeURIComponent(d.id)}`}
+                        className="text-sm font-extrabold text-black hover:underline"
+                      >
+                        {d.id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold text-black">{d.applicant}</td>
+                    <td className="px-4 py-3 text-sm font-semibold text-black">{d.bank}</td>
+                    <td className="px-4 py-3 text-right text-sm font-extrabold text-black">
+                      {money(Number(d.amount) || 0)}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-extrabold text-black">
+                      {stageMeta[d.stage].title}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold text-black/80">{d.submitted}</td>
+                    <td className="px-4 py-3 text-sm font-semibold text-black/80">
+                      {d.grantedAt || "Ã¢â‚¬â€"}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold text-black/80">{d.status}</td>
+
+                    <td className="px-4 py-3">
+                      <select
+                        key={`${d.id}-${d.stage}`}
+                        defaultValue=""
+                        onChange={(e) => {
+                          const next = e.target.value as Stage;
+                          if (!next) return;
+                          onMove(d.id, next);
+                        }}
+                        className="w-[170px] rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black outline-none focus:border-black/30"
+                      >
+                        <option value="" disabled>
+                          MoveÃ¢â‚¬Â¦
+                        </option>
+                        {STAGES.filter((s) => s !== d.stage).map((s) => (
+                          <option key={s} value={s}>
+                            {stageMeta[s].title}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="text-xs font-bold text-black/60">
+          Tip: Clicking the deal ID opens the deal view. Ã¢â‚¬Å“MoveÃ¢â‚¬Â¦Ã¢â‚¬Â logs who moved it.
+        </div>
+      </section>
+    </div>
+  );
+}
+
+
+
+

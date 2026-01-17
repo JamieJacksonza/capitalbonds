@@ -1,0 +1,144 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+function moneyZar(n: any) {
+  const v = Number(n ?? 0);
+  const safe = Number.isFinite(v) ? v : 0;
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(safe));
+}
+
+function pickAmount(d: any) {
+  return d?.amount_zar ?? d?.amount ?? d?.amountZar ?? 0;
+}
+
+function toStr(v: any) {
+  const s = String(v ?? "").trim();
+  return s || "-";
+}
+
+function kv(d: any) {
+  // show only meaningful fields, avoid dumping huge nested objects
+  return [
+    ["ID", d?.id],
+    ["Stage", d?.stage],
+    ["Submitted Date", d?.submitted_date ?? d?.submittedDate],
+    ["Created At", d?.created_at ?? d?.createdAt],
+    ["Consultant", d?.consultant],
+    ["Agent", d?.agent_name ?? d?.agentName],
+    ["Attorney/Firm", d?.registration_attorney ?? d?.attorney],
+    ["Amount", moneyZar(pickAmount(d))],
+  ];
+}
+
+export default function DealPage({ params }: { params: { id: string } }) {
+  const id = String(params?.id || "").trim();
+
+  const [deal, setDeal] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const res = await fetch("/api/deals", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Failed to load deals (HTTP ${res.status})`);
+
+        const data = await res.json();
+
+        // Accept multiple shapes: array, {deals: [...]}, etc.
+        const list =
+          Array.isArray(data) ? data :
+          Array.isArray(data?.deals) ? data.deals :
+          Array.isArray(data?.rows) ? data.rows :
+          [];
+
+        const found = list.find((d: any) => String(d?.id) === id) || null;
+
+        if (!cancelled) {
+          setDeal(found);
+          setLoading(false);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(String(e?.message || e || "Unknown error"));
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const rows = useMemo(() => (deal ? kv(deal) : []), [deal]);
+
+  return (
+    <div className="w-full">
+      <div className="mx-auto max-w-5xl px-7 py-10 md:px-12 lg:px-16">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-2xl font-extrabold text-black">Deal Details</div>
+            <div className="mt-1 text-sm font-semibold text-black/60">ID: {toStr(id)}</div>
+          </div>
+
+          <Link
+            href="/submitted"
+            className="rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Back to Submitted
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-5 text-sm font-semibold text-black/70">
+            Loading deal...
+          </div>
+        ) : error ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-700">
+            {error}
+          </div>
+        ) : !deal ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-5 text-sm font-semibold text-black/70">
+            Deal not found.
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-black/10 bg-white p-8 shadow-sm">
+            <div className="mb-4 text-sm font-extrabold text-black">Summary</div>
+
+            <div className="overflow-hidden rounded-2xl border border-black/10">
+              <table className="w-full text-left">
+                <tbody>
+                  {rows.map(([k, v]) => (
+                    <tr key={String(k)} className="border-t border-black/10 first:border-t-0">
+                      <td className="w-[220px] px-5 py-3 text-xs font-extrabold text-black/60">
+                        {String(k)}
+                      </td>
+                      <td className="px-5 py-3 text-sm font-semibold text-black">
+                        {String(v ?? "-")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 text-[11px] font-semibold text-black/50">
+              Note: This page only reads deal info. Were not touching Move/Update here.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

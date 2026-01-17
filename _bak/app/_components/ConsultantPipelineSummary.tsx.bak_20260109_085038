@@ -1,0 +1,285 @@
+﻿"use client";
+
+import React, { useMemo } from "react";
+
+type AnyDeal = Record<string, any>;
+type StageKey = "submitted" | "aip" | "instructed" | "granted" | "registrations" | "ntu";
+
+const CONSULTANT_PALETTE = [
+  "#e11d48", // rose
+  "#2563eb", // blue
+  "#16a34a", // green
+  "#f97316", // orange
+  "#7c3aed", // violet
+  "#06b6d4", // cyan
+  "#facc15", // yellow
+  "#db2777", // pink
+  "#0f766e", // teal
+  "#a16207", // amber/brown
+  "#111827", // near-black
+  "#84cc16", // lime
+];
+
+function moneyZar(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(v));
+}
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normStage(s: any): StageKey | "" {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp" || v === "iap") return "aip";
+  if (v === "grant" || v === "approved") return "granted";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (
+    v === "submitted" ||
+    v === "aip" ||
+    v === "instructed" ||
+    v === "granted" ||
+    v === "registrations" ||
+    v === "ntu"
+  )
+    return v as StageKey;
+  return "" as any;
+}
+
+function dealConsultant(d: AnyDeal) {
+  return (
+    d?.consultant ??
+    d?.consultant_name ??
+    d?.consultantName ??
+    d?.agent ??
+    d?.agent_name ??
+    d?.agentName ??
+    d?.assigned_to ??
+    d?.owner ??
+    d?.created_by ??
+    "Unassigned"
+  );
+}
+
+function dealAmount(d: AnyDeal) {
+  const raw =
+    d?.amount_zar ??
+    d?.amountZar ??
+    d?.amount ??
+    d?.value ??
+    d?.deal_value ??
+    d?.deal_amount ??
+    d?.loan_amount ??
+    d?.bond_amount ??
+    d?.purchase_price ??
+    0;
+  return toNumber(raw);
+}
+
+function dealDateKey(d: AnyDeal): Date | null {
+  const sd = String(d?.submitted_date ?? d?.submittedDate ?? d?.submitted ?? "").trim();
+  if (sd) return new Date(("${sd}T12:00:00").replace("{$sd}", sd));
+  const ca = String(d?.created_at ?? d?.createdAt ?? "").trim();
+  if (ca) return new Date(ca);
+  return null;
+}
+
+function inRange(dt: Date | null, from?: string, to?: string) {
+  if (!dt) return true;
+  const fromDt = from ? new Date("${from}T00:00:00".replace("{$from}", from)) : null;
+  const toDt = to ? new Date("${to}T23:59:59".replace("{$to}", to)) : null;
+  if (fromDt && dt < fromDt) return false;
+  if (toDt && dt > toDt) return false;
+  return true;
+}
+
+function buildColorMap(names: string[]) {
+  const map = new Map<string, string>();
+  names.forEach((n, i) => map.set(n, CONSULTANT_PALETTE[i % CONSULTANT_PALETTE.length]));
+  return map;
+}
+
+type Row = {
+  name: string;
+  total: number;
+  deals: number;
+  byStageValue: Record<StageKey, number>;
+  score: number;
+};
+
+export default function ConsultantPipelineSummary({
+  deals,
+  title,
+  from,
+  to,
+}: {
+  deals: AnyDeal[];
+  title?: string;
+  from?: string;
+  to?: string;
+}) {
+  const model = useMemo(() => {
+    const list = Array.isArray(deals) ? deals : [];
+    const filtered = list.filter((d) => inRange(dealDateKey(d), from, to));
+
+    const names = Array.from(
+      new Set(filtered.map((d) => String(dealConsultant(d) ?? "Unassigned").trim() || "Unassigned"))
+    ).sort((a, b) => a.localeCompare(b));
+
+    const colorMap = buildColorMap(names);
+
+    const emptyStageVal = () =>
+      ({
+        submitted: 0,
+        aip: 0,
+        instructed: 0,
+        granted: 0,
+        registrations: 0,
+        ntu: 0,
+      } as Record<StageKey, number>);
+
+    const rowsMap = new Map<string, Row>();
+
+    const w: Record<StageKey, number> = {
+      submitted: 1,
+      aip: 2,
+      instructed: 3,
+      granted: 5,
+      registrations: 7,
+      ntu: 0.5,
+    };
+
+    for (const d of filtered) {
+      const st = normStage(d?.stage);
+      if (!st) continue;
+
+      const name = String(dealConsultant(d) ?? "Unassigned").trim() || "Unassigned";
+      const amt = dealAmount(d);
+
+      const cur =
+        rowsMap.get(name) ||
+        ({
+          name,
+          total: 0,
+          deals: 0,
+          byStageValue: emptyStageVal(),
+          score: 0,
+        } as Row);
+
+      cur.total += amt;
+      cur.deals += 1;
+      cur.byStageValue[st] += amt;
+      cur.score += amt * w[st];
+
+      rowsMap.set(name, cur);
+    }
+
+    const rows = Array.from(rowsMap.values()).sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const bLate = (b.byStageValue.granted + b.byStageValue.registrations);
+      const aLate = (a.byStageValue.granted + a.byStageValue.registrations);
+      if (bLate !== aLate) return bLate - aLate;
+      if (b.total !== a.total) return b.total - a.total;
+      return a.name.localeCompare(b.name);
+    });
+
+    const totalValue = rows.reduce((s, r) => s + r.total, 0);
+    const totalDeals = rows.reduce((s, r) => s + r.deals, 0);
+
+    const top = rows[0];
+    const runnerUp = rows[1];
+
+    const mostLate = rows
+      .slice()
+      .sort(
+        (a, b) =>
+          (b.byStageValue.registrations + b.byStageValue.granted) -
+          (a.byStageValue.registrations + a.byStageValue.granted)
+      )[0];
+
+    const insights: string[] = [];
+    if (top) insights.push(`${top.name} is leading with ${moneyZar(top.total)} across ${top.deals} deal(s).`);
+    if (top && runnerUp) insights.push(`${runnerUp.name} is next  late stages are weighted more in the ranking.`);
+    if (mostLate) {
+      const late = mostLate.byStageValue.granted + mostLate.byStageValue.registrations;
+      insights.push(`${mostLate.name} has the strongest late-stage value (Granted + Registrations): ${moneyZar(late)}.`);
+    }
+
+    return { rows, totalValue, totalDeals, colorMap, insights };
+  }, [deals, from, to]);
+
+  const header = title || "Value per Consultant (All Stages)";
+
+  return (
+    <div className="mt-6 rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <div className="text-base font-extrabold text-black">{header}</div>
+          <div className="mt-1 text-[11px] font-semibold text-black/55">
+            {model.rows.length} consultant(s)  {model.totalDeals} deal(s) {" "}
+            <span className="font-extrabold text-black">{moneyZar(model.totalValue)}</span>
+          </div>
+        </div>
+      </div>
+
+      {model.insights.length > 0 ? (
+        <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+          <div className="text-[10px] font-extrabold text-black/55">Pipeline summary</div>
+          <ul className="mt-2 space-y-1 text-[11px] font-semibold text-black/80">
+            {model.insights.slice(0, 3).map((t, i) => (
+              <li key={i} className="leading-snug">
+                {t}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
+        <div className="grid grid-cols-12 bg-black/[0.02] px-3 py-2 text-[10px] font-extrabold text-black/60">
+          <div className="col-span-1 text-right">#</div>
+          <div className="col-span-4">Consultant</div>
+          <div className="col-span-2 text-right">Deals</div>
+          <div className="col-span-2 text-right">Late</div>
+          <div className="col-span-3 text-right">Total</div>
+        </div>
+
+        {model.rows.length === 0 ? (
+          <div className="px-3 py-3 text-xs font-semibold text-black/45">No deals found in this range.</div>
+        ) : (
+          model.rows.map((r, idx) => {
+            const c = model.colorMap.get(r.name) || "#111827";
+            const late = r.byStageValue.granted + r.byStageValue.registrations;
+            return (
+              <div
+                key={r.name}
+                className="grid grid-cols-12 items-center px-3 py-2 text-[11px] font-semibold text-black border-t border-black/10"
+              >
+                <div className="col-span-1 text-right text-black/60 font-extrabold">{idx + 1}</div>
+                <div className="col-span-4 flex min-w-0 items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20" style={{ backgroundColor: c }} />
+                  <div className="min-w-0 truncate font-extrabold">{r.name}</div>
+                </div>
+                <div className="col-span-2 text-right font-extrabold">{r.deals}</div>
+                <div className="col-span-2 text-right font-extrabold">{moneyZar(late)}</div>
+                <div className="col-span-3 text-right font-extrabold">{moneyZar(r.total)}</div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="mt-2 text-[10px] font-semibold text-black/35">
+        Ranking uses a weighted pipeline score (late stages count more) with tie-breakers on late-stage value and total value.
+      </div>
+    </div>
+  );
+}
+

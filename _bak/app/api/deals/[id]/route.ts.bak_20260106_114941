@@ -1,0 +1,184 @@
+export const runtime = "nodejs";
+
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function getSupabaseServer() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing env NEXT_PUBLIC_SUPABASE_URL");
+  const key = service || anon;
+  if (!key) throw new Error("Missing env SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function fromTable(sb: any, table: string) {
+  const schema = process.env.SUPABASE_DB_SCHEMA || "public";
+  return typeof sb.schema === "function" ? sb.schema(schema).from(table) : sb.from(table);
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+const hasOwn = (obj: any, key: string) => obj && Object.prototype.hasOwnProperty.call(obj, key);
+
+function pickFromSources(sources: any[], keys: string[]) {
+  for (const src of sources) {
+    if (!src || typeof src !== "object") continue;
+    for (const k of keys) {
+      if (hasOwn(src, k)) return src[k];
+    }
+  }
+  return undefined;
+}
+
+function hasAnyKey(sources: any[], keys: string[]) {
+  for (const src of sources) {
+    if (!src || typeof src !== "object") continue;
+    for (const k of keys) {
+      if (hasOwn(src, k)) return true;
+    }
+  }
+  return false;
+}
+
+export async function PATCH(req: Request) {
+  const id = getIdFromUrl(req);
+  if (!id) return json({ ok: false, error: "Missing id" }, 400);
+
+  let body: any = {};
+  try { body = await req.json(); } catch { body = {}; }
+
+  const supabase = getSupabaseServer();
+
+  const toStage =
+    typeof body?.toStage === "string"
+      ? body.toStage
+      : typeof body?.stage === "string"
+      ? body.stage
+      : null;
+
+  const movedBy = typeof body?.movedBy === "string" ? body.movedBy : null;
+  const note = typeof body?.note === "string" ? body.note : "";
+
+  const registration = body?.registration && typeof body.registration === "object" ? body.registration : null;
+  const instructed = body?.instructed && typeof body.instructed === "object" ? body.instructed : null;
+  const instructedDetails = body?.instructedDetails && typeof body.instructedDetails === "object" ? body.instructedDetails : null;
+  const attorneyDetails = body?.attorneyDetails && typeof body.attorneyDetails === "object" ? body.attorneyDetails : null;
+
+  const sources = [registration, instructed, instructedDetails, attorneyDetails, body];
+
+  const update: Record<string, any> = {};
+
+  if (toStage) update.stage = toStage;
+
+  // general note -> deals.notes
+  if (note && String(note).trim()) update.notes = String(note).trim();
+
+  if (movedBy) {
+    update.last_moved_by = movedBy;
+    update.last_moved_at = new Date().toISOString();
+  }
+
+  // --- Attorney mapping (Instructed)
+  const firmKeys = [
+    "registration_attorney",
+    "attorney",
+    "attorney_firm",
+    "attorneyFirm",
+    "firm",
+    "firm_name",
+    "firmName",
+    "attorney_name",
+    "attorneyName",
+  ];
+    "contact",
+    "contact_name",
+    "contactName",
+    "rep",
+    "rep_name",
+    "repName",
+    "representative",
+    "representative_name",
+    "representativeName",
+    "attorney_contact",
+    "attorneyContact",
+  ];
+
+  const emailKeys = [
+    "registration_attorney_email",
+    "email",
+    "attorney_email",
+    "attorneyEmail",
+    "contact_email",
+    "contactEmail",
+  ];
+
+  const referenceKeys = [
+    "registration_attorney_reference",
+    "reference",
+    "attorney_reference",
+    "attorneyReference",
+    "instructed_reference",
+    "instructedReference",
+    "ref",
+  ];
+
+  const telKeys = [
+    "registration_attorney_tel",
+    "attorney_tel",
+    "attorneyTel",
+    "tel",
+    "telephone",
+    "phone",
+    "mobile",
+    "cell",
+    "contact_tel",
+    "contactTel",
+  ];
+
+  if (hasAnyKey(sources, firmKeys)) update.registration_attorney = (pickFromSources(sources, firmKeys) ?? null);
+  if (hasAnyKey(sources, telKeys)) update.registration_attorney_tel = (pickFromSources(sources, telKeys) ?? null);
+
+  // These require columns to exist in Supabase (see SQL step above)
+  if (hasAnyKey(sources, emailKeys)) update.registration_attorney_email = (pickFromSources(sources, emailKeys) ?? null);
+  if (hasAnyKey(sources, referenceKeys)) update.registration_attorney_reference = (pickFromSources(sources, referenceKeys) ?? null);
+
+  if (Object.keys(update).length === 0) {
+    return json({ ok: false, error: "No valid fields provided to update." }, 400);
+  }
+
+  let q = fromTable(supabase, "deals").update(update);
+  q = isUuid(id) ? q.eq("id", id) : q.eq("deal_code", id);
+
+  const res = await q
+    .single();
+
+  if (res.error) {
+    console.error("DEALS_PATCH_ERROR:", res.error);
+    return json({ ok: false, where: "deals.update", error: res.error.message }, 500);
+  }
+
+  return json({ ok: true, deal: res.data });
+}

@@ -1,0 +1,66 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type DealStage = (typeof ALLOWED)[number];
+
+function normalizeStage(v: any): DealStage {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "iap") return "aip";
+  if (s === "registration") return "registrations";
+  if ((ALLOWED as readonly string[]).includes(s)) return s as DealStage;
+  return "submitted";
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params;
+    const body = await req.json().catch(() => ({}));
+
+    const stage = normalizeStage(body?.stage);
+    const movedBy = String(body?.movedBy || body?.actor || "").trim();
+
+    if (!movedBy) {
+      return new Response(JSON.stringify({ ok: false, error: "movedBy is required" }), { status: 400 });
+    }
+
+    const bankNotes = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+    const nowIso = new Date().toISOString();
+
+    const rows = bankNotes
+      .map((bn: any) => ({
+        deal_bank_id: String(bn?.bankId || bn?.deal_bank_id || "").trim(),
+        stage,
+        note: String(bn?.note || "").trim() || null,
+        updated_by: movedBy,
+        updated_at: nowIso,
+      }))
+      .filter((r: any) => !!r.deal_bank_id);
+
+    if (rows.length === 0) {
+      return new Response(JSON.stringify({ ok: true, saved: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    const { error } = await supabaseAdmin
+      .from("deal_bank_stage_notes")
+      .upsert(rows as any, { onConflict: "deal_bank_id,stage" });
+
+    if (error) {
+      console.error("BANK_NOTES_UPSERT_ERROR:", error);
+      return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify({ ok: true, saved: rows.length }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("BANK_NOTES_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}

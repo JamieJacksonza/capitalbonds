@@ -1,0 +1,176 @@
+﻿import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const ALLOWED = ["submitted", "aip", "instructed", "granted", "ntu", "registrations"] as const;
+type Stage = (typeof ALLOWED)[number];
+
+function supaAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || "";
+
+  if (!url || !key) {
+    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).");
+  }
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function normStage(v: unknown): Stage {
+  const s = String(v || "").trim().toLowerCase();
+  return (ALLOWED as readonly string[]).includes(s) ? (s as Stage) : "submitted";
+}
+
+// Accepts ctx.params.id as either a UUID deal id OR a deal_code
+async function resolveDealId(supabase: any, key: string) {
+  const k = String(key || "").trim();
+  if (!k) return null;
+
+  const byId = await supabase.from("deals").select("id").eq("id", k).maybeSingle();
+  if (!byId.error && byId.data?.id) return byId.data.id as string;
+
+  const byCode = await supabase.from("deals").select("id").eq("deal_code", k).maybeSingle();
+  if (!byCode.error && byCode.data?.id) return byCode.data.id as string;
+
+  return null;
+}
+
+async function handler(req: Request, ctx: { params: { id: string } }) {
+  try {
+    const incomingKey = String((await Promise.resolve(ctx?.params))?.id || "").trim();
+    if (!incomingKey) {
+      return new Response(JSON.stringify({ ok: false, error: "Missing deal id" }), { status: 400 });
+    }
+
+    const supabase = supaAdmin();
+    const body = await req.json().catch(() => ({} as any));
+
+    const stage = normStage(body?.stage);
+    const list = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+
+    const realDealId = await resolveDealId(supabase, incomingKey);
+    if (!realDealId) {
+      return new Response(JSON.stringify({ ok: false, error: "Deal not found (bad id/deal_code)" }), { status: 404 });
+    }
+
+    let updatedCount = 0;
+
+    for (const item of list) {
+      const bankId = String(item?.bankId ?? item?.id ?? "").trim();
+      if (!bankId) continue;
+
+      const bank_notes = String(item?.note ?? item?.bank_notes ?? item?.bankNotes ?? "").trim() || null;
+      const attorney = String(item?.attorney ?? item?.firm ?? "").trim() || null;
+      const attorney_note = String(item?.attorney_note ?? item?.attorneyNote ?? item?.attorney_notes ?? "").trim() || null;
+
+      const { data, error } = await supabase
+        .from("deal_banks")
+        .update({
+          bank_notes,
+          attorney,
+          attorney_note,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", bankId)
+        .eq("deal_id", realDealId)
+        .select("id");
+
+      if (error) {
+        return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+      }
+
+      if (Array.isArray(data) && data.length > 0) updatedCount += data.length;
+    }
+
+    if (list.length > 0 && updatedCount === 0) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "No bank rows updated. This usually means the bankId is wrong OR the deal_id doesn't match the bank row.",
+        }),
+        { status: 400 }
+      );
+    }
+
+    // Activity log (non-blocking)
+    try {
+      const before = await supabase.from("deals").select("deal_code, stage").eq("id", realDealId).maybeSingle();
+      const dealCode = before.data?.deal_code ?? null;
+      const stageNow = before.data?.stage ?? null;
+
+      await supabase.from("deal_activity").insert({
+        deal_id: realDealId,
+        deal_code: dealCode,
+        from_stage: stageNow,
+        to_stage: stageNow,
+        moved_by: "system",
+        actor: "system",
+        action: "bank_notes",
+        note: "Bank notes updated",
+        moved_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
+
+    return new Response(JSON.stringify({ ok: true, stage, updatedCount }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Failed to update bank notes" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
+}
+
+export async function GET(req: Request, ctx: any) {
+  try {
+    const paramsAny = await Promise.resolve(ctx?.params);
+    const fromParams = String(paramsAny?.id || "").trim();
+    const parts = new URL(req.url).pathname.split("/").filter(Boolean);
+    const fromPath = String(parts[parts.length - 2] || "").trim(); // .../deals/{id}/bank-notes
+    const incomingKey = (fromParams || fromPath || "").trim();
+
+    if (!incomingKey) {
+      return new Response(JSON.stringify({ ok: false, error: "Missing deal id" }), { status: 400 });
+    }
+
+    const supabase = supaAdmin();
+    const realDealId = await resolveDealId(supabase, incomingKey);
+    if (!realDealId) {
+      return new Response(JSON.stringify({ ok: false, error: "Deal not found (bad id/deal_code)" }), { status: 404 });
+    }
+
+    const banks = await supabase
+      .from("deal_banks")
+      .select("id, bank_name, bank_notes, attorney, attorney_note, updated_at, created_at")
+      .eq("deal_id", realDealId)
+      .order("created_at", { ascending: true });
+
+    if (banks.error) {
+      return new Response(JSON.stringify({ ok: false, error: banks.error.message }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify({ ok: true, dealId: realDealId, banks: banks.data ?? [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Failed to load bank notes" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
+}
+export async function POST(req: Request, ctx: { params: { id: string } }) {
+  return handler(req, ctx);
+}
+
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  return handler(req, ctx);
+}
+
+

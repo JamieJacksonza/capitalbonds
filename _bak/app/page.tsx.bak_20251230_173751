@@ -1,0 +1,6 @@
+import HomeDashboard from "./_components/HomeDashboard";
+
+import AgentAttorneyPies from ".\_components\AgentAttorneyPies";
+export default function Page() {
+  return <HomeDashboard />;
+}

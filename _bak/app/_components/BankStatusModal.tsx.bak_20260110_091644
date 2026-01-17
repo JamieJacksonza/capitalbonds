@@ -1,0 +1,230 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+function safeJsonParse(v: any) {
+  try {
+    if (typeof v === "string" && v.trim().startsWith("{")) return JSON.parse(v);
+  } catch {}
+  return null;
+}
+
+function pickDealDeckId(d: any) {
+  return (
+    d?.deal_deck_id ??
+    d?.dealDeckId ??
+    d?.deck_id ??
+    d?.deal_deck ??
+    d?.dealDeckID ??
+    ""
+  );
+}
+
+type BankRow = {
+  id: string;
+  bank_name: string;
+  loan_amount: string;
+  bank_notes: string;
+  bank_reference: string;
+};
+
+export default function BankStatusModal(props: {
+  open: boolean;
+  onClose: () => void;
+  deal: any;
+  onSaved?: () => void;
+}) {
+  const { open, onClose, deal, onSaved } = props;
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [rows, setRows] = useState<BankRow[]>([]);
+
+  const deckId = useMemo(() => pickDealDeckId(deal) || "-", [deal]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    setErr(null);
+    setBusy(false);
+    setRows([]);
+
+    (async () => {
+      try {
+        const key = String(deal?.id ?? deal?.deal_code ?? "").trim();
+        if (!key) {
+          setErr("Missing deal id/deal_code for bank status.");
+          return;
+        }
+
+        const res = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok || !json?.ok) {
+          setErr(json?.error || "Failed to load bank status rows.");
+          return;
+        }
+
+        const banks = Array.isArray(json?.banks) ? json.banks : [];
+        const mapped: BankRow[] = banks.map((b: any) => {
+          const raw = String(b?.bank_notes ?? "").trim();
+          const parsed = safeJsonParse(raw);
+
+          const loan_amount = String(parsed?.loan_amount ?? "").trim();
+          const bank_reference = String(parsed?.bank_reference ?? "").trim();
+          const bank_notes = parsed ? String(parsed?.bank_notes ?? parsed?.note ?? "").trim() : raw;
+
+          return {
+            id: String(b?.id ?? "").trim(),
+            bank_name: String(b?.bank_name ?? "Bank").trim(),
+            loan_amount,
+            bank_notes,
+            bank_reference,
+          };
+        });
+
+        setRows(mapped);
+      } catch (e: any) {
+        setErr(e?.message || "Failed to load bank status rows.");
+      }
+    })();
+  }, [open, deal?.id, deal?.deal_code]);
+
+  function setField(bankId: string, field: keyof BankRow, value: string) {
+    setRows((prev) => prev.map((r) => (r.id === bankId ? { ...r, [field]: value } : r)));
+  }
+
+  async function save() {
+    const key = String(deal?.id ?? deal?.deal_code ?? "").trim();
+    if (!key) {
+      setErr("Missing deal id/deal_code for save.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    try {
+      const payload = {
+        stage: String(deal?.stage ?? "submitted"),
+        bankNotes: rows.map((r) => {
+          const obj = {
+            loan_amount: (r.loan_amount || "").trim(),
+            bank_reference: (r.bank_reference || "").trim(),
+            bank_notes: (r.bank_notes || "").trim(),
+          };
+          return { bankId: r.id, note: JSON.stringify(obj) };
+        }),
+      };
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(key)}/bank-notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || `Failed to save (${res.status})`);
+
+      if (onSaved) await onSaved();
+      onClose();
+    } catch (e: any) {
+      setErr(e?.message || "Failed to save bank status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-xl">
+        <div className="border-b border-black/10 px-6 py-4">
+          <div className="text-sm font-extrabold text-black/70">DEAL DECK ID: {deckId}</div>
+          <div className="mt-1 text-xl font-extrabold text-black">Bank Status</div>
+        </div>
+
+        <div className="px-6 py-4">
+          {err ? (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {err}
+            </div>
+          ) : null}
+
+          {rows.length === 0 ? (
+            <div className="rounded-xl border border-black/10 bg-white px-4 py-8 text-center text-sm font-semibold text-black/60">
+              No banks found for this deal yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-black/10">
+              <table className="w-full min-w-[900px] text-left">
+                <thead className="border-b border-black/10 bg-white">
+                  <tr className="text-xs font-extrabold text-black/70">
+                    <th className="px-4 py-3">Bank</th>
+                    <th className="px-4 py-3">Loan amount</th>
+                    <th className="px-4 py-3">Bank notes</th>
+                    <th className="px-4 py-3">Bank reference</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/10">
+                  {rows.map((r) => (
+                    <tr key={r.id} className="align-top">
+                      <td className="px-4 py-3 text-sm font-extrabold text-black">{r.bank_name}</td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={r.loan_amount}
+                          onChange={(e) => setField(r.id, "loan_amount", e.target.value)}
+                          className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          placeholder="e.g. 2000000"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={r.bank_notes}
+                          onChange={(e) => setField(r.id, "bank_notes", e.target.value)}
+                          className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          placeholder="e.g. AIP @12%"
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <input
+                          value={r.bank_reference}
+                          onChange={(e) => setField(r.id, "bank_reference", e.target.value)}
+                          className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          placeholder="e.g. 2345"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-black/10 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-sm font-extrabold text-black hover:border-black/20"
+            disabled={busy}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            className="rounded-2xl bg-black px-5 py-2 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+            disabled={busy}
+          >
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

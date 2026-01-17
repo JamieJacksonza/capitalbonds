@@ -1,0 +1,457 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+const CONSULTANTS = ["Kristie", "Elmarie", "Cindy", "Chelsea"] as const;
+
+const BANKS = [
+  "FNB",
+  "Standard Bank",
+  "ABSA",
+  "Nedbank",
+  "Capitec",
+  "Investec",
+  "Discovery Bank",
+  "Other",
+] as const;
+
+type BankRow = {
+  bank_name: string;
+  amount_zar: string; // optional override per bank, default to requested amount
+  reference_number: string;
+  contact_name: string;
+  contact_email: string;
+  contact_phone: string;
+};
+
+function newBankRow(): BankRow {
+  return {
+    bank_name: "FNB",
+    amount_zar: "",
+    reference_number: "",
+    contact_name: "",
+    contact_email: "",
+    contact_phone: "",
+  };
+}
+
+export default function NewSubmissionPage() {
+  // Client details
+  const [applicant, setApplicant] = useState("");
+  const [applicantEmail, setApplicantEmail] = useState("");
+  const [applicantCell, setApplicantCell] = useState("");
+  const [propertyAddress, setPropertyAddress] = useState("");
+
+  // Deal details
+  const [agentName, setAgentName] = useState("");
+  const [amount, setAmount] = useState<string>(""); // requested bond amount (NOT cumulative)
+  const [notes, setNotes] = useState("");
+
+  const [consultant, setConsultant] = useState<string>(() => {
+    if (typeof window === "undefined") return "Kristie";
+    return localStorage.getItem("cb_user") || "Kristie";
+  });
+
+  // Multiple banks
+  const [banks, setBanks] = useState<BankRow[]>(() => [newBankRow()]);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [createdId, setCreatedId] = useState<string>("");
+
+  const amountNum = useMemo(() => Number(amount), [amount]);
+
+  function updateBank(i: number, patch: Partial<BankRow>) {
+    setBanks((prev) => prev.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  }
+
+  function addBank() {
+    setBanks((prev) => [...prev, newBankRow()]);
+  }
+
+  function removeBank(i: number) {
+    setBanks((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setCreatedId("");
+
+    const cleanApplicant = applicant.trim();
+    const cleanConsultant = consultant.trim();
+    const cleanAgentName = agentName.trim();
+
+    const cleanEmail = applicantEmail.trim();
+    const cleanCell = applicantCell.trim();
+    const cleanProperty = propertyAddress.trim();
+
+    const cleanNotes = notes.trim();
+
+    if (!cleanApplicant) {
+      setMsg({ type: "err", text: "Client name is required." });
+      return;
+    }
+
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setMsg({ type: "err", text: "Requested bond amount must be a valid number." });
+      return;
+    }
+
+    const banksClean = (banks || [])
+      .map((b) => ({
+        bank_name: String(b.bank_name || "").trim(),
+        amount_zar: String(b.amount_zar || "").trim(),
+        reference_number: String(b.reference_number || "").trim(),
+        contact_name: String(b.contact_name || "").trim(),
+        contact_email: String(b.contact_email || "").trim(),
+        contact_phone: String(b.contact_phone || "").trim(),
+      }))
+      .filter((b) => !!b.bank_name);
+
+    if (banksClean.length === 0) {
+      setMsg({ type: "err", text: "Add at least one bank." });
+      return;
+    }
+
+    // Optional: prevent duplicate banks
+    const seen = new Set<string>();
+    for (const b of banksClean) {
+      const key = b.bank_name.toLowerCase();
+      if (seen.has(key)) {
+        setMsg({ type: "err", text: "Duplicate bank selected. Remove duplicates." });
+        return;
+      }
+      seen.add(key);
+    }
+
+    try {
+      setSubmitting(true);
+
+      const res = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          applicant: cleanApplicant,
+          applicant_email: cleanEmail || null,
+          applicant_cell: cleanCell || null,
+          property_address: cleanProperty || null,
+
+          consultant: cleanConsultant,
+          agent_name: cleanAgentName || null,
+
+          amount: amountNum,
+          notes: cleanNotes || null,
+
+          banks: banksClean.map((b) => ({
+            bank_name: b.bank_name,
+            amount_zar: b.amount_zar ? Number(b.amount_zar) : null,
+            reference_number: b.reference_number || null,
+            contact_name: b.contact_name || null,
+            contact_email: b.contact_email || null,
+            contact_phone: b.contact_phone || null,
+          })),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.ok) {
+        setMsg({ type: "err", text: data?.error || `Request failed (${res.status})` });
+        return;
+      }
+
+      const id = String(data?.record?.id || "");
+      setCreatedId(id);
+
+      setMsg({ type: "ok", text: "Submission created successfully." });
+
+      // Reset form
+      setApplicant("");
+      setApplicantEmail("");
+      setApplicantCell("");
+      setPropertyAddress("");
+      setAgentName("");
+      setAmount("");
+      setNotes("");
+      setBanks([newBankRow()]);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Something went wrong submitting." });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
+      <header className="space-y-2">
+        <div className="text-xs font-extrabold text-black/60">Submitted</div>
+        <h1 className="text-3xl font-extrabold tracking-tight text-black">New Submission</h1>
+        <p className="text-sm font-semibold text-black/70">
+          Create a new client and select multiple banks in one go.
+        </p>
+      </header>
+
+      <form onSubmit={onSubmit} className="space-y-6 rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        {/* Client details */}
+        <div className="space-y-3">
+          <div className="text-sm font-extrabold text-black">Client details</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="text-xs font-extrabold text-black">Client name</div>
+              <input
+                value={applicant}
+                onChange={(e) => setApplicant(e.target.value)}
+                placeholder="e.g. John Smith"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+
+            <div>
+              <div className="text-xs font-extrabold text-black">Agent name (optional)</div>
+              <input
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                placeholder="e.g. Thando"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+
+            <div>
+              <div className="text-xs font-extrabold text-black">Client email (optional)</div>
+              <input
+                value={applicantEmail}
+                onChange={(e) => setApplicantEmail(e.target.value)}
+                placeholder="e.g. john@email.com"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+
+            <div>
+              <div className="text-xs font-extrabold text-black">Client cellphone (optional)</div>
+              <input
+                value={applicantCell}
+                onChange={(e) => setApplicantCell(e.target.value)}
+                placeholder="e.g. 0821234567"
+                inputMode="tel"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="text-xs font-extrabold text-black">Property address (optional)</div>
+              <input
+                value={propertyAddress}
+                onChange={(e) => setPropertyAddress(e.target.value)}
+                placeholder="e.g. 12 Main Road, Durbanville, Cape Town"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Deal details */}
+        <div className="space-y-3">
+          <div className="text-sm font-extrabold text-black">Deal details</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="text-xs font-extrabold text-black">Consultant</div>
+              <select
+                value={consultant}
+                onChange={(e) => {
+                  setConsultant(e.target.value);
+                  try { localStorage.setItem("cb_user", e.target.value); } catch {}
+                }}
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              >
+                {CONSULTANTS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div className="text-xs font-extrabold text-black">Requested bond amount (ZAR)</div>
+              <input
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                inputMode="numeric"
+                placeholder="e.g. 2000000"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+              <div className="mt-1 text-[11px] font-bold text-black/50">
+                This is the client’s requested amount (not cumulative across banks).
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Banks */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+  <label className="block">
+    <div className="text-xs font-extrabold text-black">Insurance needed?</div>
+    <select
+      name="insurance_needed"
+      defaultValue="no"
+      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+    >
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  </label>
+
+  <label className="block">
+    <div className="text-xs font-extrabold text-black">Deal deck ID</div>
+    <input
+      name="deal_deck_id"
+      placeholder="e.g. DD-1029"
+      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none placeholder:text-black/30 focus:border-black/30"
+    />
+    <div className="mt-1 text-[11px] font-semibold text-black/45">
+      Internal reference only (not the system Deal ID).
+    </div>
+  </label>
+</div>
+
+<div className="text-sm font-extrabold text-black">Banks</div>
+            <button
+              type="button"
+              onClick={addBank}
+              className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+            >
+              + Add bank
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {banks.map((b, i) => (
+              <div key={i} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-extrabold text-black/70">Bank #{i + 1}</div>
+                  {banks.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeBank(i)}
+                      className="rounded-2xl bg-black px-3 py-2 text-[11px] font-extrabold text-white hover:opacity-90"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Bank</div>
+                    <select
+                      value={b.bank_name}
+                      onChange={(e) => updateBank(i, { bank_name: e.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    >
+                      {BANKS.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Bank amount (optional)</div>
+                    <input
+                      value={b.amount_zar}
+                      onChange={(e) => updateBank(i, { amount_zar: e.target.value })}
+                      inputMode="numeric"
+                      placeholder="Leave blank = requested amount"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Reference # (optional)</div>
+                    <input
+                      value={b.reference_number}
+                      onChange={(e) => updateBank(i, { reference_number: e.target.value })}
+                      placeholder="e.g. 33222"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact name (optional)</div>
+                    <input
+                      value={b.contact_name}
+                      onChange={(e) => updateBank(i, { contact_name: e.target.value })}
+                      placeholder="e.g. Thando"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact email (optional)</div>
+                    <input
+                      value={b.contact_email}
+                      onChange={(e) => updateBank(i, { contact_email: e.target.value })}
+                      placeholder="e.g. contact@bank.co.za"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact phone (optional)</div>
+                    <input
+                      value={b.contact_phone}
+                      onChange={(e) => updateBank(i, { contact_phone: e.target.value })}
+                      placeholder="e.g. 0211234567"
+                      inputMode="tel"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div>
+          <div className="text-xs font-extrabold text-black">Notes (optional)</div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Anything important..."
+            className="mt-2 min-h-[110px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+          />
+        </div>
+
+        {msg && (
+          <div className="rounded-2xl border border-black/10 bg-white p-4">
+            <div className="text-sm font-extrabold text-black">{msg.text}</div>
+            {createdId ? (
+              <div className="mt-2 text-xs font-bold text-black/60">
+                Reference: <span className="text-black">{createdId}</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting ? "Submitting..." : "Submit"}
+          </button>
+
+          <Link
+            href="/submitted"
+            className="rounded-2xl border border-black/10 bg-white px-5 py-3 text-sm font-extrabold text-black hover:border-black/20"
+          >
+            Back to Submitted
+          </Link>
+        </div>
+      </form>
+    </div>
+  );
+}

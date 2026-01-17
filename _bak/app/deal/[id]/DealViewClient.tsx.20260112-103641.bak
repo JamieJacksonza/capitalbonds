@@ -1,0 +1,263 @@
+﻿"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+// keep this if the file exists in your project
+import StatusBankNotesCard from "./StatusBankNotesCard";
+
+type Props = { dealKey: string };
+type Deal = Record<string, any>;
+
+function fmtMoneyZar(v: any) {
+  const n = Number(v);
+  if (!isFinite(n)) return "";
+  try {
+    return n.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
+  } catch {
+    return "R " + n.toFixed(0);
+  }
+}
+
+function prettyKey(k: string) {
+  return k
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function isPrimitive(v: any) {
+  return (
+    v === null ||
+    v === undefined ||
+    typeof v === "string" ||
+    typeof v === "number" ||
+    typeof v === "boolean"
+  );
+}
+
+export default function DealViewClient({ dealKey }: Props) {
+  const router = useRouter();
+  const [deal, setDeal] = useState<Deal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      setLoading(true);
+      setErr(null);
+
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || json?.ok === false) throw new Error(json?.error || `Failed to load deal (${res.status})`);
+
+        let d: any =
+          (json as any)?.deal ??
+          (json as any)?.data ??
+          (json as any)?.item ??
+          (json as any)?.row ??
+          (json as any)?.record ??
+          json;
+
+// If we somehow still grabbed the wrapper, unwrap again
+if (d && d.ok === true && d.deal) d = d.deal;
+if (d && d.ok === true && d.data) d = d.data;
+        if (alive) setDeal(d);
+      } catch (e: any) {
+        if (alive) {
+          setDeal(null);
+          setErr(e?.message || "Failed to load deal");
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+    };
+  }, [dealKey]);
+
+  const title = deal?.deal_code || deal?.id || "Deal";
+  const stage = deal?.stage ? String(deal.stage) : "";
+  const amountZar = deal?.amount_zar ?? deal?.amount ?? null;
+
+  // Nice summary cards (common fields)
+  const summary = useMemo(() => {
+    if (!deal) return [];
+    const candidates: Array<[string, any]> = [
+      ["Deal Code", deal.deal_code],
+      ["Deal ID", deal.id],
+      ["Stage", deal.stage],
+      ["Applicant", deal.applicant],
+      ["Bank", deal.bank],
+      ["Amount", deal.amount_zar ? fmtMoneyZar(deal.amount_zar) : (deal.amount ? fmtMoneyZar(deal.amount) : "")],
+      ["Consultant", deal.consultant],
+      ["Agent", deal.agent_name],
+      ["Attorney", deal.attorney],
+      ["Submitted Date", deal.submitted_date],
+    ];
+    return candidates.filter(([_, v]) => v !== undefined && v !== null && String(v).trim() !== "");
+  }, [deal]);
+
+  // Raw fallback: show *anything* primitive so the page cant look empty
+  const rawDetails = useMemo(() => {
+    if (!deal) return [];
+    const entries = Object.entries(deal)
+      .filter(([k, v]) => isPrimitive(v) && String(v).trim() !== "")
+      .map(([k, v]) => [prettyKey(k), v] as [string, any]);
+
+    // sort to put obvious ones first
+    const priority = ["Deal Code", "Deal Id", "Stage", "Applicant", "Bank", "Amount Zar", "Consultant", "Agent Name"];
+    entries.sort((a, b) => {
+      const ai = priority.indexOf(a[0]);
+      const bi = priority.indexOf(b[0]);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
+
+    return entries;
+  }, [deal]);
+
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <div className="text-xl font-extrabold text-black">{title}</div>
+          {stage ? <div className="text-xs font-semibold text-black/60">Stage: {stage}</div> : null}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="inline-flex items-center gap-2 rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+        >
+           Back
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="rounded-2xl border border-black/10 bg-white p-4 text-sm font-semibold text-black/70">
+          Loading deal
+        </div>
+      ) : null}
+
+      {err ? (
+        <div className="rounded-2xl border border-black/20 bg-white p-4 text-sm font-semibold text-black">
+          {err}
+        </div>
+      ) : null}
+
+      {!loading && !err && deal ? (
+        <>
+          <div className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+            <div className="text-sm font-extrabold text-black">Deal Summary</div>
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {summary.length ? (
+                summary.map(([k, v]) => (
+                  <div key={k} className="rounded-2xl border border-black/10 bg-white p-4">
+                    <div className="text-[11px] font-extrabold text-black/50">{k}</div>
+                    <div className="mt-1 text-sm font-semibold text-black whitespace-pre-wrap break-words">
+                      {String(v)}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm font-semibold text-black/60">
+                  Summary fields not found  showing raw deal details below.
+                  </div>
+
+                  {/* FALLBACK SUMMARY (schema-safe) */}
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Deal Code</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.deal_code ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Applicant</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.applicant ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Bank</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.bank ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Amount</div>
+                    <div className="text-sm font-extrabold text-black">
+                      {typeof (deal as any)?.amount_zar === "number"
+                        ? (deal as any).amount_zar.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 })
+                        : ((deal as any)?.amount_zar ?? "-")}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Consultant</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.consultant ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Agent</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.agent_name ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
+                    <div className="text-[11px] font-extrabold text-black/45">Attorney</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.attorney ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Stage</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.stage ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-extrabold text-black/45">Submitted</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.submitted_date ?? "-"}</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm md:col-span-2">
+                    <div className="text-[11px] font-extrabold text-black/45">Property</div>
+                    <div className="text-sm font-extrabold text-black">{(deal as any)?.property_address ?? "-"}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+            <div className="text-sm font-extrabold text-black">Deal Details</div>
+          {deal ? (
+            <pre className="mt-3 max-h-[360px] overflow-auto rounded-2xl border border-black/10 bg-black/[0.03] p-4 text-[11px] font-semibold text-black/80">
+              {JSON.stringify(deal, null, 2)}
+            </pre>
+          ) : (
+            <div className="mt-3 text-sm font-semibold text-black/60">No deal loaded.</div>
+          )}
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {rawDetails.map(([k, v]) => (
+                <div key={k} className="rounded-2xl border border-black/10 bg-white p-4">
+                  <div className="text-[11px] font-extrabold text-black/50">{k}</div>
+                  <div className="mt-1 text-sm font-semibold text-black whitespace-pre-wrap break-words">
+                    {String(v)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <StatusBankNotesCard dealKey={String(dealKey)} amountZar={amountZar ?? null} stage={stage || null} />
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+
+

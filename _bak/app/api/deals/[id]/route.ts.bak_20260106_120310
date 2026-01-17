@@ -1,0 +1,256 @@
+export const runtime = "nodejs";
+
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function getSupabaseServer() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing env NEXT_PUBLIC_SUPABASE_URL");
+  const key = service || anon;
+  if (!key) throw new Error("Missing env SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function fromTable(sb: any, table: string) {
+  const schema = process.env.SUPABASE_DB_SCHEMA || "public";
+  return typeof sb.schema === "function" ? sb.schema(schema).from(table) : sb.from(table);
+}
+
+function hasOwn(obj: any, key: string) {
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function pickFirst(obj: any, keys: string[]): any {
+  for (const k of keys) {
+    if (!obj) continue;
+    if (hasOwn(obj, k) && obj[k] !== undefined) return obj[k];
+  }
+  return undefined;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+// Retry update if some columns don't exist in DB (keeps us resilient)
+async function resilientUpdate(dealsTbl: any, id: string, update: Record<string, any>, selectCols: string) {
+  const tryUpdate = async () =>
+    dealsTbl.update(update).eq("id", id).select(selectCols).single();
+
+  let res = await tryUpdate();
+
+  // If schema mismatch (column doesn't exist), remove that key and retry a few times
+  for (let i = 0; i < 8 && res?.error?.message && /column .* does not exist/i.test(res.error.message); i++) {
+    const m = res.error.message.match(/column\s+"([^"]+)"/i);
+    const bad = m?.[1];
+    if (!bad) break;
+    delete update[bad];
+    res = await tryUpdate();
+  }
+
+  return res;
+}
+
+export async function PATCH(req: Request) {
+  const keyRaw = getIdFromUrl(req);
+  if (!keyRaw) return json({ ok: false, error: "Missing id" }, 400);
+
+  const key = decodeURIComponent(keyRaw);
+
+  let body: any = {};
+  try { body = await req.json(); } catch { body = {}; }
+
+  const supabase = getSupabaseServer();
+  const dealsTbl = fromTable(supabase, "deals");
+
+  // Find the real row (accept UUID OR deal_code)
+  const findRes = await dealsTbl
+    .select("id, deal_code, banks_source")
+    .or(`id.eq.${key},deal_code.eq.${key}`)
+    .maybeSingle();
+
+  if (findRes.error) {
+    console.error("DEALS_FIND_ERROR:", findRes.error);
+    return json({ ok: false, where: "deals.find", error: findRes.error.message }, 500);
+  }
+  if (!findRes.data?.id) return json({ ok: false, error: "Deal not found" }, 404);
+
+  const dealId = String(findRes.data.id);
+  const existingBanksSource =
+    typeof findRes.data.banks_source === "object" && findRes.data.banks_source
+      ? findRes.data.banks_source
+      : {};
+
+  // Stage
+  const toStage =
+    typeof body?.toStage === "string"
+      ? body.toStage
+      : typeof body?.stage === "string"
+      ? body.stage
+      : null;
+
+  const stage = normalizeStage(toStage);
+
+  // Notes
+  const movedBy = typeof body?.movedBy === "string" ? body.movedBy : null;
+
+  const note = typeof body?.note === "string" ? body.note : null;
+  const stageNotes = typeof body?.stageNotes === "string" ? body.stageNotes : null;
+
+  // AIP per-bank details (array)
+  const aipBankDetails = Array.isArray(body?.aipBankDetails) ? body.aipBankDetails : [];
+
+  // Instructed / attorney details can come in different shapes
+  // (registration object OR root fields OR "attorney"/"instructed" objects)
+  const registration =
+    body?.registration && typeof body.registration === "object" ? body.registration : null;
+
+  const attorney =
+    body?.attorney && typeof body.attorney === "object"
+      ? body.attorney
+      : body?.instructed && typeof body.instructed === "object"
+      ? body.instructed
+      : null;
+
+  const regObj = attorney || registration || body;
+
+  const attorneyName = pickFirst(regObj, [
+    "registration_attorney",
+    "attorney_name",
+    "attorneyName",
+    "attorney",
+    "firm",
+    "attorney_firm",
+  ]);
+
+  const attorneyTel = pickFirst(regObj, [
+    "registration_attorney_tel",
+    "attorney_tel",
+    "attorneyTel",
+    "tel",
+    "phone",
+  ]);
+
+  const attorneyEmail = pickFirst(regObj, [
+    "registration_attorney_email",
+    "attorney_email",
+    "attorneyEmail",
+    "email",
+  ]);
+
+  const attorneyRef = pickFirst(regObj, [
+    "registration_attorney_reference",
+    "attorney_reference",
+    "attorneyReference",
+    "reference",
+    "ref",
+  ]);
+
+  const attorneyNotes = pickFirst(regObj, [
+    "registration_attorney_notes",
+    "attorney_notes",
+    "attorneyNotes",
+    "notes",
+    "note",
+  ]);
+
+  // Build banks_source stage payloads (safe JSON bucket)
+  const banks_source: any = { ...existingBanksSource };
+
+  if (aipBankDetails.length > 0) {
+    banks_source.aip = banks_source.aip && typeof banks_source.aip === "object" ? banks_source.aip : {};
+    banks_source.aip.updatedAt = nowIso();
+    banks_source.aip.banks = aipBankDetails;
+  }
+
+  if (stage === "instructed") {
+    banks_source.instructed = banks_source.instructed && typeof banks_source.instructed === "object" ? banks_source.instructed : {};
+    banks_source.instructed.updatedAt = nowIso();
+    banks_source.instructed.attorney = {
+      name: attorneyName ?? null,
+      tel: attorneyTel ?? null,
+      email: attorneyEmail ?? null,
+      reference: attorneyRef ?? null,
+      notes: attorneyNotes ?? null,
+    };
+  }
+
+  // Stage note history bucket (optional)
+  const stageForNotes = normalizeStage(body?.stageForNotes ?? stage) || stage || null;
+  const combinedNote = (stageNotes || note || "").trim();
+  if (combinedNote) {
+    banks_source.stage_notes = Array.isArray(banks_source.stage_notes) ? banks_source.stage_notes : [];
+    banks_source.stage_notes.unshift({
+      at: nowIso(),
+      stage: stageForNotes || null,
+      by: movedBy || null,
+      note: combinedNote,
+    });
+    // cap history
+    banks_source.stage_notes = banks_source.stage_notes.slice(0, 50);
+  }
+
+  // DB update (resilient)
+  const update: Record<string, any> = {
+    banks_source,
+  };
+
+  if (stage) update.stage = stage;
+
+  // keep your existing "deals.notes" behavior for global note (if you want it)
+  if (combinedNote) update.notes = combinedNote;
+
+  if (movedBy) {
+    update.last_moved_by = movedBy;
+    update.last_moved_at = nowIso();
+  }
+
+  // Only write attorney fields if provided (so we don't blank stuff)
+  if (attorneyName !== undefined) update.registration_attorney = attorneyName ?? null;
+  if (attorneyTel !== undefined) update.registration_attorney_tel = attorneyTel ?? null;
+  if (attorneyEmail !== undefined) update.registration_attorney_email = attorneyEmail ?? null;
+  if (attorneyRef !== undefined) update.registration_attorney_reference = attorneyRef ?? null;
+  if (attorneyNotes !== undefined) update.registration_attorney_notes = attorneyNotes ?? null;
+
+  const selectCols = "id, deal_code, stage, notes, last_moved_by, last_moved_at, banks_source, registration_attorney, registration_attorney_tel, registration_attorney_email, registration_attorney_reference, registration_attorney_notes";
+
+  const res = await resilientUpdate(dealsTbl, dealId, update, selectCols);
+
+  if (res.error) {
+    console.error("DEALS_PATCH_ERROR:", res.error);
+    return json({ ok: false, where: "deals.update", error: res.error.message }, 500);
+  }
+
+  return json({ ok: true, deal: res.data });
+}

@@ -1,0 +1,184 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+export type Stage = "submitted" | "aip" | "instructed" | "granted" | "ntu" | "registrations";
+
+export type Deal = {
+  id: string;
+  applicant: string;
+  amount: number;
+  bank: string;
+  submitted?: string;
+  status?: string;
+  stage: Stage;
+  notes?: string;
+  consultant?: string;
+
+  // NEW: agent support
+  agent_name?: string | null;
+  agent?: string | null;
+
+  grantedAt?: string;
+};
+
+function normStage(v: any): Stage {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "submitted" || s === "aip" || s === "instructed" || s === "granted" || s === "ntu") return s;
+  return "submitted";
+}
+
+function getLoggedInNameSafe() {
+  try {
+    return localStorage.getItem("cb_user") || "System";
+  } catch {
+    return "System";
+  }
+}
+
+function getAmountSafe(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function useDeals() {
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>("");
+
+  const refreshAll = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const res = await fetch("/api/deals", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Failed to load deals (${res.status})`);
+      }
+
+      const list: Deal[] = (data.deals || []).map((d: any) => {
+        const agentName = d?.agent_name ?? d?.agentName ?? d?.agent ?? null;
+        return {
+          ...d,
+          stage: normStage(d.stage),
+          amount: getAmountSafe(d),
+          agent_name: agentName,
+          agent: agentName,
+        };
+      });
+
+      setDeals(list);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load deals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  const byStage = useCallback(
+    (stage: Stage) => {
+      const s = normStage(stage);
+      return (deals || []).filter((d) => normStage(d.stage) === s);
+    },
+    [deals]
+  );
+
+  const stageCounts = useMemo(() => {
+    const counts: Record<Stage, number> = {
+      submitted: 0,
+      aip: 0,
+      instructed: 0,
+      granted: 0,
+      ntu: 0,
+    };
+    for (const d of deals || []) {
+      const s = normStage(d.stage);
+      counts[s] += 1;
+    }
+    return counts;
+  }, [deals]);
+
+  const moveDealToStage = useCallback(
+    async (dealId: string, nextStage: Stage, opts?: { note?: string; movedBy?: string }) => {
+      const id = String(dealId || "").trim();
+      if (!id) throw new Error("Missing deal id");
+
+      const next = normStage(nextStage);
+      const movedBy = (opts?.movedBy || getLoggedInNameSafe()).trim() || "System";
+      const note = String(opts?.note || "").trim();
+
+      // optimistic UI move
+      setDeals((prev) =>
+        prev.map((d) =>
+          d.id === id
+            ? {
+                ...d,
+                stage: next,
+                status:
+                  next === "submitted"
+                    ? "Submitted"
+                    : next === "aip"
+                    ? "AIP"
+                    : next === "instructed"
+                    ? "Instructed"
+                    : next === "granted"
+                    ? "Granted"
+                    : "NTU",
+                grantedAt: next === "granted" ? (d.grantedAt || new Date().toISOString().slice(0, 10)) : d.grantedAt,
+              }
+            : d
+        )
+      );
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nextStage: next, movedBy, note }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        await refreshAll();
+        throw new Error(data?.error || `Failed to move deal (${res.status})`);
+      }
+
+      if (data?.deal?.id) {
+        const sd: any = data.deal;
+        const agentName = sd?.agent_name ?? sd?.agentName ?? sd?.agent ?? null;
+
+        const serverDeal = {
+          ...sd,
+          stage: normStage(sd.stage),
+          amount: getAmountSafe(sd),
+          agent_name: agentName,
+          agent: agentName,
+        } as Deal;
+
+        setDeals((prev) => prev.map((d) => (d.id === serverDeal.id ? serverDeal : d)));
+      } else {
+        await refreshAll();
+      }
+
+      return data;
+    },
+    [refreshAll]
+  );
+
+  return {
+    deals,
+    loading,
+    error,
+    refreshAll,
+    byStage,
+    stageCounts,
+    moveDealToStage,
+  };
+}

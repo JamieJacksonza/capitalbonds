@@ -1,0 +1,27 @@
+﻿import DealViewClient from "./DealViewClient";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default function DealDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id?: string };
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const fromParams = decodeURIComponent(String(params?.id || "")).trim();
+  const qp =
+    searchParams?.id ??
+    searchParams?.dealId ??
+    searchParams?.code ??
+    searchParams?.deal_code;
+
+  const fromQuery = decodeURIComponent(
+    String(Array.isArray(qp) ? qp[0] : qp || "")
+  ).trim();
+
+  const dealKey = fromParams || fromQuery;
+
+  return <DealViewClient dealKey={dealKey} />;
+}

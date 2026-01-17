@@ -1,0 +1,157 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import DealMovePanel from "../../_components/DealMovePanel";
+
+function money(n: any) {
+  const num = Number(n || 0);
+  return `R ${Number.isFinite(num) ? num.toLocaleString("en-ZA") : "0"}`;
+}
+
+function stageLabel(s0: any) {
+  const s = String(s0 || "").toLowerCase();
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  return "NTU";
+}
+
+function normalizeKey(v: any) {
+  return String(v ?? "").trim();
+}
+
+function matchDeal(d: any, key: string) {
+  if (!d || !key) return false;
+  const k = key.toLowerCase();
+
+  const id = String(d.id ?? d.deal_id ?? d.dealId ?? "").trim().toLowerCase();
+  const code = String(d.deal_code ?? d.dealCode ?? d.code ?? "").trim().toLowerCase();
+
+  return (id && id === k) || (code && code === k);
+}
+
+export default function DealPage() {
+  const params = useParams() as any;
+  const sp = useSearchParams();
+
+  const key = useMemo(() => {
+    const p = normalizeKey(params?.id);
+    const q = normalizeKey(sp?.get("code"));
+    return p || q;
+  }, [params, sp]);
+
+  const [deal, setDeal] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setLoading(true);
+      setErr(null);
+
+      try {
+        const res = await fetch("/api/deals", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+
+        // Support multiple API shapes
+        const list =
+          (Array.isArray(json?.deals) ? json.deals :
+          Array.isArray(json?.data) ? json.data :
+          Array.isArray(json) ? json :
+          []) as any[];
+
+        const found = list.find((d) => matchDeal(d, key));
+        if (!found) {
+          throw new Error(`Deal not found for: ${key}`);
+        }
+
+        if (alive) setDeal(found);
+      } catch (e: any) {
+        if (alive) setErr(e?.message || "Failed to load deal");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    if (key) run();
+    else {
+      setLoading(false);
+      setErr("No deal id/code found in the URL.");
+    }
+
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Deal</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">
+            {deal?.deal_code || deal?.id || (loading ? "Loading..." : "Not found")}
+          </div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            Stage: {stageLabel(deal?.stage)}
+          </div>
+        </div>
+
+        <Link
+          href="/"
+          className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-sm font-extrabold text-black hover:border-black/20"
+        >
+           Back to dashboard
+        </Link>
+      </div>
+
+      <DealMovePanel />
+
+      <div className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        {loading ? (
+          <div className="text-sm font-semibold text-black/60">Loading deal from Supabase</div>
+        ) : err ? (
+          <div className="text-sm font-semibold text-red-600">{err}</div>
+        ) : (
+          <div className="grid gap-3">
+            <div className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/60">Applicant</div>
+              <div className="text-sm font-semibold text-black">{deal?.applicant || "-"}</div>
+            </div>
+
+            <div className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/60">Amount</div>
+              <div className="text-sm font-extrabold text-black">{money(deal?.amount_zar ?? deal?.amountZar ?? deal?.amount)}</div>
+            </div>
+
+            <div className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/60">Consultant</div>
+              <div className="text-sm font-semibold text-black">{deal?.consultant || "-"}</div>
+            </div>
+
+            <div className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/60">Agent</div>
+              <div className="text-sm font-semibold text-black">{deal?.agent_name || "-"}</div>
+            </div>
+
+            <div className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/60">Notes</div>
+              <div className="text-sm font-semibold text-black">{deal?.notes || "-"}</div>
+            </div>
+
+            <div className="mt-2 rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-xs font-extrabold text-black/60 mb-2">Raw record (debug)</div>
+              <pre className="text-xs font-semibold text-black/70 whitespace-pre-wrap">{JSON.stringify(deal, null, 2)}</pre>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

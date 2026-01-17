@@ -1,0 +1,57 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL + key).");
+  }
+
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const id = getIdFromUrl(req);
+    if (!id) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+
+    const body = await req.json().catch(() => ({} as any));
+    const updates = { ...(body?.deal || body) };
+
+    if (!updates || typeof updates !== "object" || Object.keys(updates).length === 0) {
+      return NextResponse.json({ ok: false, error: "No updates provided" }, { status: 400 });
+    }
+
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from("deals")
+      .update(updates)
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    return NextResponse.json({ ok: true, deal: data });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Unknown error" }, { status: 500 });
+  }
+}

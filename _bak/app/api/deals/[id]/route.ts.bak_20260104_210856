@@ -1,0 +1,133 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+function asArray(v: any): any[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export async function GET(_req: Request, ctx: { params: { id: string } }) {
+  const sb = admin();
+  const target = String(ctx?.params?.id ?? "").trim();
+  if (!target) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+
+  const q = sb.from("deals").select("*").limit(1);
+  const res = isUuid(target) ? await q.eq("id", target) : await q.eq("deal_code", target);
+
+  if (res.error) return NextResponse.json({ ok: false, error: res.error.message }, { status: 500 });
+  const deal = res.data?.[0] ?? null;
+  if (!deal) return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+
+  return NextResponse.json({ ok: true, deal, data: deal });
+}
+
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  const sb = admin();
+  const target = String(ctx?.params?.id ?? "").trim();
+  if (!target) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+
+  const q = sb.from("deals").select("*").limit(1);
+  const found = isUuid(target) ? await q.eq("id", target) : await q.eq("deal_code", target);
+
+  if (found.error) return NextResponse.json({ ok: false, error: found.error.message }, { status: 500 });
+  const deal = found.data?.[0] ?? null;
+  if (!deal) return NextResponse.json({ ok: false, error: "Deal not found" }, { status: 404 });
+
+  const body = await req.json().catch(() => ({} as any));
+  const now = new Date().toISOString();
+
+  const nextStageRaw = body?.toStage ?? body?.stage;
+  const nextStage = normalizeStage(nextStageRaw);
+  const noteText = String(body?.note ?? "").trim();
+  const movedBy = String(body?.movedBy ?? body?.moved_by ?? body?.user ?? "").trim() || null;
+
+  const moveHistory = asArray(deal.move_history);
+  const notesHistory = asArray(deal.notes_history);
+
+  const update: Record<string, any> = {};
+
+  // safe subset of fields
+  const allow = new Set([
+    "notes",
+    "registration_number",
+    "registration_attorney",
+    "registration_attorney_tel",
+    "agent_comm_paid",
+    "payment_due_date",
+  ]);
+
+  Object.keys(body || {}).forEach((k) => {
+    if (allow.has(k)) update[k] = body[k];
+  });
+
+  if (nextStage && String(nextStage) !== String(deal.stage ?? "")) {
+    moveHistory.push({
+      at: now,
+      by: movedBy,
+      from: deal.stage ?? null,
+      to: nextStage,
+      note: noteText || null,
+    });
+
+    update.stage = nextStage;
+    update.last_moved_at = now;
+    update.last_moved_by = movedBy;
+    update.move_history = moveHistory;
+  }
+
+  if (noteText) {
+    notesHistory.push({
+      at: now,
+      by: movedBy,
+      stage: nextStage || deal.stage || null,
+      note: noteText,
+    });
+
+    update.notes = noteText;
+    update.notes_history = notesHistory;
+  }
+
+  const { data: updatedRows, error: upErr } = await sb
+    .from("deals")
+    .update(update)
+    .eq("id", deal.id)
+    .select("*")
+    .limit(1);
+
+  if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+
+  const updated = updatedRows?.[0] ?? null;
+  return NextResponse.json({ ok: true, deal: updated, data: updated });
+}
