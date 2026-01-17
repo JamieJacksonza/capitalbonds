@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import MoveDealInline from "./MoveDealInline";
-import { useDeals, type Deal, type Stage } from "./useDeals";
+import { useDeals } from "./useDeals";
+import type { Deal, Stage } from "../lib/deals";
 
 const __USE_QUERY_STAGE = false;
 
