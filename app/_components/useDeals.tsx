@@ -82,11 +82,33 @@ export function useDeals() {
     return () => controllerRef.current?.abort();
   }, [refreshAll]);
 
+  const moveDealToStage = useCallback(
+    async (dealId: string, nextStage: string, meta?: { note?: string; by?: string; movedBy?: string }) => {
+      const note = meta?.note || "";
+      const movedBy = meta?.movedBy || meta?.by;
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nextStage, note, movedBy }),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Failed to move deal (${res.status})`);
+      }
+
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
   return {
     deals,
     loading,
     isLoading: loading,  // keep compatibility
     error,
     refreshAll,
+    moveDealToStage,
   };
 }
