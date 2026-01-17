@@ -46,6 +46,7 @@ export default function ConsultantPage() {
       instructed: 0,
       granted: 0,
       ntu: 0,
+      registrations: 0,
     };
     for (const d of consultantDeals) map[d.stage] = (map[d.stage] || 0) + 1;
     return map;
