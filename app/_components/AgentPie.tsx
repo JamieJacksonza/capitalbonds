@@ -97,7 +97,7 @@ export default function AgentPie() {
       ) : (
         <div className="mt-5">
           <div className="min-w-0">
-            <ResponsiveContainer width="100%" height={260}>
+            <ResponsiveContainer width="100%" height={260} minWidth={0} minHeight={0}>
               <PieChart>
                 <Tooltip
                   formatter={(v: any) => moneyZar(Number(v || 0))}

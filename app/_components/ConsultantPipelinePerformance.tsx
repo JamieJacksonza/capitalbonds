@@ -200,7 +200,7 @@ export default function ConsultantPipelinePerformance({
 
           <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="h-[200px] min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <ResponsiveContainer width="100%" height={200} minWidth={0} minHeight={0}>
                 <PieChart>
                   <Pie
                     data={model.pie}
