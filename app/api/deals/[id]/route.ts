@@ -268,29 +268,7 @@ export async function PATCH(req: Request) {
     .update(update)
     .eq("id", dealId)
     .select("*")
-    .single()
-    /* AUTOLOG_DEAL_UPDATES_V1 */
-    try {
-      const before = await sb.from("deals").select("*").eq("id", dealId).maybeSingle();
-      const dealCode = (before as any)?.data?.deal_code ?? null;
-      const stage = (before as any)?.data?.stage ?? null;
-      const keys = Object.keys(update || {});
-      const note = "Updated: " + (keys.length ? keys.join(", ") : "deal");
-
-      await sb.from("deal_activity").insert({
-        deal_id: dealId,
-        deal_code: dealCode,
-        from_stage: stage,
-        to_stage: stage,
-        moved_by: movedBy || "system",
-        actor: movedBy || "system",
-        action: "update",
-        note,
-        moved_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-      });
-    } catch {}
-;
+    .single();
 
   if (res.error) {
     console.error("DEALS_PATCH_ERROR:", res.error);
