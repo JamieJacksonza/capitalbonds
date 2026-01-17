@@ -40,6 +40,10 @@
   "exclude": [
     "node_modules",
     ".next",
-    "node_modules"
+    "node_modules",
+    "_bak",
+    "_backups",
+    "**/*.bak",
+    "**/*.bak/**"
   ]
 }
