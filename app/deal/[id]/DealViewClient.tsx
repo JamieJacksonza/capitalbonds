@@ -65,6 +65,8 @@ export default function DealViewClient({ dealKey }: Props) {
   const [insuranceNeeded, setInsuranceNeeded] = useState(false);
   const [insuranceSaving, setInsuranceSaving] = useState(false);
   const [insuranceErr, setInsuranceErr] = useState<string | null>(null);
+  const [insuranceSendSaving, setInsuranceSendSaving] = useState(false);
+  const [insuranceSendMsg, setInsuranceSendMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [attorney, setAttorney] = useState("");
   const [attorneySaving, setAttorneySaving] = useState(false);
   const [attorneyErr, setAttorneyErr] = useState<string | null>(null);
@@ -204,6 +206,34 @@ export default function DealViewClient({ dealKey }: Props) {
       setInsuranceNeeded(prev);
     } finally {
       setInsuranceSaving(false);
+    }
+  }
+
+  async function sendInsuranceEmail() {
+    if (!deal) return;
+    setInsuranceSendSaving(true);
+    setInsuranceSendMsg(null);
+
+    try {
+      const res = await fetch("/api/webhooks/insurance", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deal,
+          source: "deal_view_registrations",
+        }),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Webhook failed (${res.status})`);
+      }
+
+      setInsuranceSendMsg({ type: "ok", text: "Insurance email sent." });
+    } catch (e: any) {
+      setInsuranceSendMsg({ type: "err", text: e?.message || "Failed to send insurance email." });
+    } finally {
+      setInsuranceSendSaving(false);
     }
   }
 
@@ -467,6 +497,37 @@ export default function DealViewClient({ dealKey }: Props) {
             </div>
             {insuranceErr ? (
               <div className="mt-2 text-xs font-semibold text-red-600">{insuranceErr}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {showInsuranceToggle ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-extrabold text-black/45">Insurance Email</div>
+                <div className="text-sm font-semibold text-black/70">
+                  Send insurance details via Make.com.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={sendInsuranceEmail}
+                disabled={insuranceSendSaving}
+                className="rounded-xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {insuranceSendSaving ? "Sending..." : "Send Insurance Email"}
+              </button>
+            </div>
+            {insuranceSendMsg ? (
+              <div
+                className={[
+                  "mt-2 text-xs font-semibold",
+                  insuranceSendMsg.type === "ok" ? "text-black/70" : "text-red-600",
+                ].join(" ")}
+              >
+                {insuranceSendMsg.text}
+              </div>
             ) : null}
           </div>
         ) : null}
