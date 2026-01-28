@@ -143,11 +143,6 @@ const [err, setErr] = useState<string | null>(null);
     notes: "",
   });
 
-  useEffect(() => {
-    if (normalizeStage(nextStage) !== "instructed") setInsuranceNeeded(null);
-  }, [nextStage]);
-
-
   const currentStage = normalizeStage(d?.stage);
   const target = extractDealKey(d) || extractDealKey(deal);
   const nextStageOptions = useMemo(() => {
