@@ -52,13 +52,26 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
+    const parseMoney = (v: any) => {
+      const raw = String(v ?? "").replace(/[^\d.]/g, "");
+      if (!raw) return NaN;
+      return Number(raw);
+    };
+    const MAX_INT_32 = 2147483647;
+
     const deal_code = String(body?.deal_code || "").trim();
     const deal_deck_id = String(body?.deal_deck_id || "").trim();
     const applicant = String(body?.applicant || "").trim();
     const consultant = String(body?.consultant || "").trim();
     const agent = String(body?.agent || "").trim();
     const stage = String(body?.stage || "submitted").trim().toLowerCase();
-    const amount_zar = Number(body?.amount_zar);
+    const amount_zar = parseMoney(body?.amount_zar);
+    const purchase_price =
+      body?.purchase_price === undefined ? undefined : parseMoney(body?.purchase_price);
+    const client_main_bank = String(body?.client_main_bank || "").trim();
+    const client_email = String(body?.client_email || "").trim();
+    const client_cellphone = String(body?.client_cellphone || "").trim();
+    const bond_due_date = String(body?.bond_due_date || body?.bondDueDate || "").trim();
 
     // Optional
     const notes = String(body?.notes || "").trim();
@@ -69,6 +82,15 @@ export async function POST(req: Request) {
     if (!agent) return NextResponse.json({ ok: false, error: "agent is required" }, { status: 400, headers: corsHeaders() });
     if (!Number.isFinite(amount_zar) || amount_zar <= 0) {
       return NextResponse.json({ ok: false, error: "amount_zar must be > 0" }, { status: 400, headers: corsHeaders() });
+    }
+    if (amount_zar > MAX_INT_32) {
+      return NextResponse.json({ ok: false, error: "amount_zar is too large" }, { status: 400, headers: corsHeaders() });
+    }
+    if (purchase_price !== undefined && (!Number.isFinite(purchase_price) || purchase_price <= 0)) {
+      return NextResponse.json({ ok: false, error: "purchase_price must be > 0" }, { status: 400, headers: corsHeaders() });
+    }
+    if (purchase_price !== undefined && purchase_price > MAX_INT_32) {
+      return NextResponse.json({ ok: false, error: "purchase_price is too large" }, { status: 400, headers: corsHeaders() });
     }
 
     const sb = supabaseAdmin();
@@ -85,6 +107,11 @@ export async function POST(req: Request) {
       stage,
     };
 
+    if (client_main_bank) insertRow.client_main_bank = client_main_bank;
+    if (purchase_price !== undefined) insertRow.purchase_price = purchase_price;
+    if (client_email) insertRow.client_email = client_email;
+    if (client_cellphone) insertRow.client_cellphone = client_cellphone;
+    if (bond_due_date) insertRow.bond_due_date = bond_due_date.slice(0, 10);
     if (notes) insertRow.notes = notes;
 
     const { data, error } = await sb

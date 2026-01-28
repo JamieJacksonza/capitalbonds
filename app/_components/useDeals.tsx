@@ -17,7 +17,7 @@ function normalizeDeal(d: AnyDeal) {
   const amount = toNumber(d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0);
   const stage = normStage(d?.stage);
 
-  const agentName = d?.agent_name ?? d?.agentName ?? null;
+  const agentName = d?.agent_name ?? d?.agentName ?? d?.agent ?? null;
 
   const banks = Array.isArray(d?.banks)
     ? d.banks.map((b: any) => ({

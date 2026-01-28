@@ -148,7 +148,7 @@ export default function AgentPage() {
               <tr className="text-xs font-extrabold text-black">
                 <th className="px-4 py-3">Deal</th>
                 <th className="px-4 py-3">Applicant</th>
-                <th className="px-4 py-3">Stage</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Bank</th>
                 <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3 text-right">Amount</th>

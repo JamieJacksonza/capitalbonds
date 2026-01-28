@@ -42,6 +42,26 @@ function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
+async function sendInsuranceWebhook(deal: any, meta: { movedBy?: any; note?: any; stageData?: any }) {
+  const url = process.env.MAKE_INSURANCE_WEBHOOK_URL;
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "insurance_needed",
+        deal,
+        movedBy: meta?.movedBy ?? null,
+        note: meta?.note ?? null,
+        stageData: meta?.stageData ?? null,
+      }),
+    });
+  } catch (e) {
+    console.error("INSURANCE_WEBHOOK_ERROR:", e);
+  }
+}
+
 async function fetchDealByKey(sb: any, key: string) {
   if (isUuid(key)) {
     const r = await fromTable(sb, "deals").select("*").eq("id", key).maybeSingle();
@@ -146,7 +166,23 @@ export async function GET(req: Request) {
 
     banks = dedupeBanks(banks);
 
-    return json({ ok: true, deal: { ...res.data, banks } });
+    const dealBanksRes = await fromTable(supabase, "deal_banks")
+      .select("bank_name, bank_notes, reference_number, contact_name, contact_email, contact_phone, attorney, attorney_note, created_at, updated_at")
+      .eq("deal_id", dealId);
+
+    const bankNotesRes = await fromTable(supabase, "bank_notes")
+      .select("bank_name, bank_notes, bank_reference, stage, created_at, updated_at")
+      .eq("deal_id", dealId);
+
+    return json({
+      ok: true,
+      deal: {
+        ...res.data,
+        banks,
+        deal_banks: Array.isArray(dealBanksRes.data) ? dealBanksRes.data : [],
+        bank_notes_rows: Array.isArray(bankNotesRes.data) ? bankNotesRes.data : [],
+      },
+    });
   } catch (e: any) {
     console.error("DEALS_GET_FATAL:", e);
     return json({ ok: false, error: e?.message || "Server error" }, 500);
@@ -220,6 +256,18 @@ export async function PATCH(req: Request) {
     update.registration_paid_at = v ? v : null;
   }
 
+  const leadPaidRaw = body?.lead_source_paid ?? body?.leadSourcePaid;
+  if (leadPaidRaw !== undefined) {
+    const val = leadPaidRaw === true || String(leadPaidRaw).trim().toLowerCase() === "true";
+    update.lead_source_paid = val;
+  }
+
+  const leadPaidAtRaw = body?.lead_source_paid_at ?? body?.leadSourcePaidAt;
+  if (leadPaidAtRaw !== undefined) {
+    const v = String(leadPaidAtRaw || "").trim();
+    update.lead_source_paid_at = v ? v : null;
+  }
+
   const parseBool = (v: any) => {
     if (v === true) return true;
     if (v === false) return false;
@@ -264,6 +312,12 @@ export async function PATCH(req: Request) {
   "agent_comm_paid", "registrationNumber"]);
   if (regNo !== null) update.registration_number = regNo?.trim() ? regNo.trim() : null;
 
+  const regStatusesRaw = body?.registration_statuses ?? body?.registrationStatuses ?? body?.registration_status ?? body?.registrationStatus;
+  if (regStatusesRaw !== undefined) {
+    if (Array.isArray(regStatusesRaw)) update.registration_statuses = regStatusesRaw;
+    else if (typeof regStatusesRaw === "string") update.registration_statuses = regStatusesRaw;
+  }
+
   const res = await fromTable(supabase, "deals")
     .update(update)
     .eq("id", dealId)
@@ -273,6 +327,10 @@ export async function PATCH(req: Request) {
   if (res.error) {
     console.error("DEALS_PATCH_ERROR:", res.error);
     return json({ ok: false, where: "deals.update", error: res.error.message }, 500);
+  }
+
+  if (toStage && String(toStage).toLowerCase() === "instructed") {
+    await sendInsuranceWebhook(res.data, { movedBy, note, stageData: body?.stageData ?? body?.stage_data ?? null });
   }
 
   return json({ ok: true, deal: res.data });

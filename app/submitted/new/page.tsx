@@ -26,9 +26,10 @@ export default function NewSubmissionPage() {
   const [consultant, setConsultant] = useState<string>(CONSULTANTS[0] ?? "");
   const [agent, setAgent] = useState<string>("");
   const [amount, setAmount] = useState<string>("");
+  const [purchasePrice, setPurchasePrice] = useState<string>("");
+  const [clientMainBank, setClientMainBank] = useState<string>("");
+  const [clientMainBankOther, setClientMainBankOther] = useState<string>("");
   const [submittedDate, setSubmittedDate] = useState<string>(() => todayLocalYYYYMMDD());
-  const [noteDetail, setNoteDetail] = useState<string>("");
-
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -36,6 +37,13 @@ export default function NewSubmissionPage() {
     const n = Number(String(amount).replace(/[^\d.]/g, ""));
     return Number.isFinite(n) ? n : NaN;
   }, [amount]);
+
+  const purchasePriceNum = useMemo(() => {
+    const raw = String(purchasePrice).replace(/[^\d.]/g, "");
+    if (!raw) return NaN;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : NaN;
+  }, [purchasePrice]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,14 +54,19 @@ export default function NewSubmissionPage() {
     const con = String(consultant || "").trim();
     const ag = String(agent || "").trim();
     const dt = String(submittedDate || "").trim();
-    const notes = String(noteDetail || "").trim();
-
+    const bank =
+      clientMainBank === "Other"
+        ? String(clientMainBankOther || "").trim()
+        : String(clientMainBank || "").trim();
     if (!dc) return setMsg({ type: "err", text: "Deal Ops Number is required." });
     if (!ap) return setMsg({ type: "err", text: "Applicant is required." });
     if (!con) return setMsg({ type: "err", text: "Consultant is required." });
-    if (!ag) return setMsg({ type: "err", text: "Agent is required." });
+    if (!ag) return setMsg({ type: "err", text: "Lead source is required." });
     if (!dt) return setMsg({ type: "err", text: "Date is required." });
-    if (!Number.isFinite(amountNum) || amountNum <= 0) return setMsg({ type: "err", text: "Amount must be > 0." });
+    if (!Number.isFinite(amountNum) || amountNum <= 0) return setMsg({ type: "err", text: "Loan amount must be > 0." });
+    if (purchasePrice && (!Number.isFinite(purchasePriceNum) || purchasePriceNum <= 0)) {
+      return setMsg({ type: "err", text: "Purchase price must be > 0." });
+    }
 
     setSaving(true);
 
@@ -65,9 +78,10 @@ export default function NewSubmissionPage() {
         consultant: con,
         agent: ag,
         amount_zar: amountNum,
+        purchase_price: Number.isFinite(purchasePriceNum) ? purchasePriceNum : undefined,
+        client_main_bank: bank || undefined,
         stage: "submitted",
         submitted_date: dt,
-        notes: notes,
       };
 
       const res = await fetch("/api/deals", {
@@ -148,11 +162,21 @@ export default function NewSubmissionPage() {
           </div>
 
           <div>
-            <div className="text-xs font-extrabold text-black/70">Amount (ZAR)</div>
+            <div className="text-xs font-extrabold text-black/70">Loan Amount (ZAR)</div>
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="e.g. 1200000"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black/70">Purchase Price</div>
+            <input
+              value={purchasePrice}
+              onChange={(e) => setPurchasePrice(e.target.value)}
+              placeholder="e.g. 1500000"
               className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
             />
           </div>
@@ -183,13 +207,38 @@ export default function NewSubmissionPage() {
           </div>
 
           <div>
-            <div className="text-xs font-extrabold text-black/70">Agent</div>
+            <div className="text-xs font-extrabold text-black/70">Lead Source</div>
             <input
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
               placeholder="e.g. Jason"
               className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
             />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black/70">Client Main Bank</div>
+            <select
+              value={clientMainBank}
+              onChange={(e) => setClientMainBank(e.target.value)}
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            >
+              <option value="">Select bank</option>
+              <option value="FNB">FNB</option>
+              <option value="INVESTEC">INVESTEC</option>
+              <option value="NEDBANK">NEDBANK</option>
+              <option value="STANDARD BANK">STANDARD BANK</option>
+              <option value="ABSA">ABSA</option>
+              <option value="Other">Other</option>
+            </select>
+            {clientMainBank === "Other" ? (
+              <input
+                value={clientMainBankOther}
+                onChange={(e) => setClientMainBankOther(e.target.value)}
+                placeholder="Type bank name"
+                className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              />
+            ) : null}
           </div>
 
           <div>
@@ -205,15 +254,6 @@ export default function NewSubmissionPage() {
             </div>
           </div>
 
-          <div className="md:col-span-2">
-            <div className="text-xs font-extrabold text-black/70">Note detail</div>
-            <textarea
-              value={noteDetail}
-              onChange={(e) => setNoteDetail(e.target.value)}
-              placeholder="Add any important detail about this submission..."
-              className="mt-2 h-28 w-full resize-none rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
-            />
-          </div>
         </div>
 
         <div className="mt-5 flex items-center justify-end gap-3">

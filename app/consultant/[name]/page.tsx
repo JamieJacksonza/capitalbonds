@@ -146,7 +146,7 @@ export default function ConsultantPage() {
             {consultantName}
           </h1>
           <p className="mt-2 text-sm font-semibold text-black/80">
-            Full deal list + stage breakdown + granted value.
+            Full deal list + status breakdown + granted value.
           </p>
         </div>
 
@@ -186,7 +186,7 @@ export default function ConsultantPage() {
           <div className="mt-2 text-4xl font-extrabold tracking-tight text-black">
             {consultantDeals.length}
           </div>
-          <div className="mt-2 text-sm font-semibold text-black/80">All stages</div>
+          <div className="mt-2 text-sm font-semibold text-black/80">All statuses</div>
         </div>
 
         {STAGES.map((s) => (
@@ -261,7 +261,7 @@ export default function ConsultantPage() {
                 <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Applicant</th>
                 <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Bank</th>
                 <th className="px-4 py-3 text-right text-xs font-extrabold text-black">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Stage</th>
+                <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Submitted</th>
                 <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Granted At</th>
                 <th className="px-4 py-3 text-left text-xs font-extrabold text-black">Status</th>

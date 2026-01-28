@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const NAV = [
+  { href: "/pipeline", label: "Pipeline" },
+  { href: "/overview", label: "Overview" },
   { href: "/instructed", label: "Instructed" },
 { href: "/granted", label: "Granted" },
 { href: "/aip", label: "AIP" },

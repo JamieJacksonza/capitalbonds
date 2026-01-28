@@ -84,7 +84,7 @@ export default function StageInputsByStage({
   return (
     <div className="mt-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-zinc-900">Stage inputs</div>
+        <div className="text-sm font-semibold text-zinc-900">Status inputs</div>
         <div className="text-[11px] font-medium text-zinc-500">Grouped automatically</div>
       </div>
 
@@ -99,7 +99,7 @@ export default function StageInputsByStage({
               </div>
 
               {b.rows.length === 0 ? (
-                <div className="mt-2 text-[11px] text-zinc-500">No captured inputs for this stage yet.</div>
+                <div className="mt-2 text-[11px] text-zinc-500">No captured inputs for this status yet.</div>
               ) : (
                 <div className="mt-3 space-y-2">
                   {b.rows.map((r) => (

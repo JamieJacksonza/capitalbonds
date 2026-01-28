@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import MoveDealInline from "./MoveDealInline";
 import { useDeals } from "./useDeals";
@@ -120,20 +120,162 @@ function pickBankNames(d: any) {
   return { names: single || "-", count: single ? 1 : 0 };
 }
 
+function toStatusList(raw: any): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((v: any) => String(v).trim()).filter(Boolean);
+  }
+
+  const s = String(raw || "").trim();
+  if (!s) return [];
+  return s
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function getInstructedStatuses(d: any): string[] {
+  const stageData = latestStageData(d, "instructed");
+  const raw =
+    d?.registration_statuses ??
+    d?.registrationStatuses ??
+    d?.registration_status ??
+    d?.registrationStatus ??
+    stageData?.registration_statuses ??
+    stageData?.registrationStatuses ??
+    stageData?.registration_status ??
+    stageData?.registrationStatus ??
+    "";
+
+  return toStatusList(raw);
+}
+
+function latestStageData(d: any, stageKey: string) {
+  const hist = Array.isArray(d?.move_history) ? d.move_history : [];
+  const target = String(stageKey || "").trim().toLowerCase();
+  const last = [...hist]
+    .reverse()
+    .find((h: any) => String(h?.to ?? h?.to_stage ?? "").trim().toLowerCase() === target);
+  if (last?.data && typeof last.data === "object") return last.data;
+  if (last?.stageData && typeof last.stageData === "object") return last.stageData;
+  return null;
+}
+
+function pickInstructedStatus(d: any) {
+  const vals = getInstructedStatuses(d);
+  if (vals.length) return vals.join(", ");
+  const fallback = String(d?.status ?? "").trim();
+  if (fallback && fallback !== "-" && fallback.toLowerCase() !== "null" && fallback.toLowerCase() !== "undefined") {
+    return fallback;
+  }
+  return stageLabel(d?.stage ?? "instructed");
+}
+
+function pickEstimatedRegDate(d: any) {
+  const stageData = latestStageData(d, "instructed");
+  const raw =
+    d?.estimated_reg_date ??
+    d?.estimatedRegDate ??
+    d?.instructed_estimated_reg_date ??
+    d?.instructedEstimatedRegDate ??
+    stageData?.estimated_reg_date ??
+    stageData?.estimatedRegDate ??
+    stageData?.instructed_estimated_reg_date ??
+    stageData?.instructedEstimatedRegDate ??
+    "";
+  const s = String(raw || "").trim();
+  if (!s) return "-";
+  return s.slice(0, 10);
+}
+
+function pickRegistrationsEstimatedRegDate(d: any) {
+  const stageData = latestStageData(d, "registrations");
+  const raw =
+    d?.estimated_reg_date ??
+    d?.estimatedRegDate ??
+    stageData?.estimated_reg_date ??
+    stageData?.estimatedRegDate ??
+    d?.instructed_estimated_reg_date ??
+    d?.instructedEstimatedRegDate ??
+    "";
+  const s = String(raw || "").trim();
+  if (!s) return "-";
+  return s.slice(0, 10);
+}
+
+function pickAgent(d: any) {
+  return d?.agent_name ?? d?.agentName ?? d?.agent ?? "-";
+}
+
+function pickBondDueDate(d: any) {
+  const raw = d?.bond_due_date ?? d?.bondDueDate ?? "";
+  const s = String(raw || "").trim();
+  if (!s) return "-";
+  return s.slice(0, 10);
+}
+
+function bondDueKey(d: any) {
+  const raw = d?.bond_due_date ?? d?.bondDueDate ?? "";
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dt = new Date(s);
+  if (Number.isNaN(dt.getTime())) return "";
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function StageTable({ stage }: { stage: Stage }) {
   const { deals } = useDeals();
 
   const normalized = useMemo(() => normalizeStage(stage), [stage]);
   const stageKey = normalized as Stage;
   const isRegistrations = normalized === "registrations";
+  const isInstructed = normalized === "instructed";
+  const isSubmitted = normalized === "submitted";
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const list = useMemo(() => {
-    return (deals || [])
+    let next = (deals || [])
       .filter((d: any) => normalizeStage(d?.stage) === normalized)
       .map((d: any) => ({ ...d, amount: toAmount(d) })) as Deal[];
-  }, [deals, normalized]);
 
-  const colSpan = isRegistrations ? 5 : 6;
+    if (isInstructed && statusFilter !== "all") {
+      next = next.filter((d: any) => getInstructedStatuses(d).includes(statusFilter));
+    }
+
+    return next;
+  }, [deals, normalized, isInstructed, statusFilter]);
+
+  const instructedStatusOptions = useMemo(() => {
+    if (!isInstructed) return [];
+    const uniq = new Set<string>();
+    for (const d of deals || []) {
+      if (normalizeStage(d?.stage) !== "instructed") continue;
+      for (const s of getInstructedStatuses(d)) uniq.add(s);
+    }
+    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
+  }, [deals, isInstructed]);
+
+  const dueSoon = useMemo(() => {
+    if (!isSubmitted) return [];
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+
+    return list
+      .map((d: any) => ({ deal: d, key: bondDueKey(d) }))
+      .filter((x) => x.key)
+      .filter((x) => {
+        const dt = new Date(`${x.key}T00:00:00`);
+        return dt >= start && dt <= end;
+      })
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }, [isSubmitted, list]);
+
+  const colSpan = isRegistrations ? 6 : isInstructed ? 8 : isSubmitted ? 7 : 6;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
@@ -147,9 +289,9 @@ export default function StageTable({ stage }: { stage: Stage }) {
     className="h-[180px] w-full object-contain"
   />
 </div>
-<div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs font-extrabold text-white/70">Stage</div>
+          <div className="text-xs font-extrabold text-white/70">Status</div>
           <div className="mt-1 text-2xl font-extrabold tracking-tight text-white">
             {stageLabel(stageKey)}
           </div>
@@ -158,19 +300,75 @@ export default function StageTable({ stage }: { stage: Stage }) {
           </div>
         </div>
 
-        {stageKey === "submitted" ? (
-          <Link
-            href="/submitted/new"
-            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
-          >
-            + New Submission
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          {isInstructed ? (
+            <div className="min-w-[220px]">
+              <div className="text-[11px] font-extrabold text-white/60">Filter status</div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-2 text-sm font-semibold text-white outline-none ring-0 focus:border-white/30"
+              >
+                <option value="all">All statuses</option>
+                {instructedStatusOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {stageKey === "submitted" ? (
+            <Link
+              href="/submitted/new"
+              className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+            >
+              + New Submission
+            </Link>
+          ) : null}
+        </div>
       </div>
+
+      {isSubmitted ? (
+        <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+          <div className="px-4 py-3 text-[11px] font-extrabold text-black/60">
+            Bond Due Soon (next 7 days)
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left">
+              <thead className="border-t border-black/10 bg-white">
+                <tr className="text-xs font-extrabold text-black/70">
+                  <th className="px-4 py-3">Client Name</th>
+                  <th className="px-4 py-3">Consultant</th>
+                  <th className="px-4 py-3">Bond Due Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/10">
+                {dueSoon.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-4 text-sm font-semibold text-black/60" colSpan={3}>
+                      No bond due dates in the next 7 days.
+                    </td>
+                  </tr>
+                ) : (
+                  dueSoon.map(({ deal, key }: any) => (
+                    <tr key={deal?.id ?? key} className="hover:bg-black/[0.02]">
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{pickApplicant(deal)}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{deal.consultant || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{key}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-left">
+          <table className="w-full min-w-[1300px] text-left">
             <thead className="border-b border-black/10 bg-white">
               {isRegistrations ? (
                 <tr className="text-xs font-extrabold text-black/70">
@@ -178,6 +376,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
                   <th className="px-4 py-3">Client Name</th>
                   <th className="px-4 py-3">Loan Amount</th>
                   <th className="px-4 py-3">Consultant Name</th>
+                  <th className="px-4 py-3">Estimated Reg date</th>
                   <th className="px-4 py-3">Actions</th>
                 </tr>
               ) : (
@@ -187,6 +386,9 @@ export default function StageTable({ stage }: { stage: Stage }) {
                   <th className="px-4 py-3">Amount</th>
                   <th className="px-4 py-3">Consultant</th>
                   <th className="px-4 py-3">Agent</th>
+                  {isInstructed ? <th className="px-4 py-3">Status</th> : null}
+                  {isInstructed ? <th className="px-4 py-3">Estimated Reg date</th> : null}
+                  {isSubmitted ? <th className="px-4 py-3">Bond Due Date</th> : null}
                   <th className="px-4 py-3">Actions</th>
                 </tr>
               )}
@@ -196,7 +398,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
               {list.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-sm font-semibold text-black/60" colSpan={colSpan}>
-                    No deals in this stage yet.
+                    No deals in this status yet.
                   </td>
                 </tr>
               ) : isRegistrations ? (
@@ -223,6 +425,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
                       <td className="px-4 py-4 text-sm font-semibold text-black">{pickApplicant(d)}</td>
                       <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
                       <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{pickRegistrationsEstimatedRegDate(d)}</td>
                       <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">
                           <Link
@@ -262,7 +465,27 @@ export default function StageTable({ stage }: { stage: Stage }) {
 
                       <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
 
-                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.agent_name || "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{pickAgent(d)}</td>
+
+                      {isInstructed ? (
+                        <td className="px-4 py-4">
+                          <span className="inline-flex items-center rounded-full border border-black/10 bg-black/[0.03] px-2.5 py-1 text-xs font-extrabold text-black">
+                            {pickInstructedStatus(d)}
+                          </span>
+                        </td>
+                      ) : null}
+
+                      {isInstructed ? (
+                        <td className="px-4 py-4 text-sm font-semibold text-black">
+                          {pickEstimatedRegDate(d)}
+                        </td>
+                      ) : null}
+
+                      {isSubmitted ? (
+                        <td className="px-4 py-4 text-sm font-semibold text-black">
+                          {pickBondDueDate(d)}
+                        </td>
+                      ) : null}
 
                       <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">

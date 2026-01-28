@@ -137,7 +137,7 @@ export default function DealHistoryCards({ deal }: { deal: AnyRec }) {
                       <div className="text-xs font-extrabold text-black">{fmtDate(at)}</div>
                       {stage ? (
                         <div className="text-xs font-semibold text-black/60">
-                          stage{" "}
+                          status{" "}
                           <span className="font-extrabold text-black">{stageLabel(stage)}</span>
                         </div>
                       ) : null}

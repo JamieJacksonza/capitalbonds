@@ -113,17 +113,6 @@ function clamp(n: number) {
   return n < 0 ? 0 : n;
 }
 
-function isInsuranceOpted(v: any) {
-  if (v === true) return true;
-  if (v === false) return false;
-  if (typeof v === "number") return v === 1;
-  if (typeof v === "string") {
-    const s = v.trim().toLowerCase();
-    return s === "true" || s === "yes" || s === "1";
-  }
-  return false;
-}
-
 function computeConsultantScores(deals: any[]) {
   const stagePoints: Record<string, number> = {
     submitted: 1,
@@ -235,6 +224,13 @@ function buildPieStyle(items: Slice[]) {
   }
 
   return { background: `conic-gradient(${parts.join(", ")})` };
+}
+
+function hasReachedInstructed(d: any) {
+  const stage = String(d?.stage ?? "").toLowerCase().trim();
+  if (stage === "instructed" || stage === "granted" || stage === "registrations" || stage === "ntu") return true;
+  const hist = Array.isArray(d?.move_history) ? d.move_history : [];
+  return hist.some((h: any) => String(h?.to ?? h?.to_stage ?? "").toLowerCase().trim() === "instructed");
 }
 
 function ConsultantSection({
@@ -420,13 +416,19 @@ export default function HomeDashboard() {
 
   const consultantScores = useMemo(() => computeConsultantScores(filteredDeals), [filteredDeals]);
 
-  const insuranceCount = useMemo(() => {
-    return filteredDeals.filter((d: any) => isInsuranceOpted(d?.insurance_needed)).length;
-  }, [filteredDeals]);
-
   const registrationTimingRows = useMemo(() => {
     const rows = computeRegistrationTimingByConsultant(filteredDeals);
     return rows.sort((a, b) => (a.avg - b.avg) || (b.count - a.count) || a.name.localeCompare(b.name));
+  }, [filteredDeals]);
+
+  const instructedTotals = useMemo(() => {
+    const list = filteredDeals.filter((d: any) => hasReachedInstructed(d));
+    const loanTotal = list.reduce((s: number, d: any) => s + toNumber(d?.amount_zar ?? d?.amount ?? 0), 0);
+    const purchaseTotal = list.reduce((s: number, d: any) => s + toNumber(d?.purchase_price ?? d?.purchasePrice ?? 0), 0);
+    const total = loanTotal + purchaseTotal;
+    const loanPct = total > 0 ? (loanTotal / total) * 100 : 0;
+    const purchasePct = total > 0 ? (purchaseTotal / total) * 100 : 0;
+    return { loanTotal, purchaseTotal, count: list.length, loanPct, purchasePct };
   }, [filteredDeals]);
 
   return (
@@ -451,6 +453,12 @@ export default function HomeDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-4">
+            <a
+              href="/pipeline?add=1"
+              className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+            >
+              + Contribute to Pipeline
+            </a>
             <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
               <div className="text-[10px] font-extrabold text-black/60">Date filter (submitted)</div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -544,7 +552,7 @@ export default function HomeDashboard() {
           <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
             <div className="text-sm font-extrabold text-black">Avg Time to Registration (Days) per Consultant</div>
             <div className="mt-1 text-xs font-semibold text-black/60">
-              Completed deals only (stage = registrations).
+              Completed deals only (status = registrations).
             </div>
 
             <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
@@ -610,7 +618,7 @@ export default function HomeDashboard() {
           Weighted by stage progress, value, and speed (NTU penalized).
         </div>
         <div className="mt-2 text-[11px] font-semibold text-black/60">
-          DealScore = StagePoints * ln(value + 1) * (1 / (1 + ageDays/14))
+          DealScore = StatusPoints * ln(value + 1) * (1 / (1 + ageDays/14))
         </div>
         <div className="mt-1 text-[11px] font-semibold text-black/50">
           Score = (ConsultantRawScore / MaxRawScore) * 100
@@ -653,12 +661,45 @@ export default function HomeDashboard() {
   </div>
 </div>
 
-{/* Insurance opt-ins */}
+{/* Instructed Totals Pie */}
 <div className="mt-8">
   <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
-    <div className="text-xs font-extrabold text-black/60">Insurance Opt-ins</div>
-    <div className="mt-2 text-3xl font-extrabold text-black">{insuranceCount}</div>
-    <div className="mt-1 text-xs font-semibold text-black/60">Deals marked as insurance needed.</div>
+    <div className="text-sm font-extrabold text-black">Instructed Totals: Loan vs Purchase</div>
+    <div className="mt-1 text-xs font-semibold text-black/60">
+      Deals that have reached Instructed stage. ({instructedTotals.count} deal(s))
+    </div>
+
+    <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-center">
+      <div className="relative h-52 w-52 shrink-0">
+        <div
+          className="h-52 w-52 rounded-full border border-black/10"
+          style={buildPieStyle([
+            { label: "Loan Amount", value: instructedTotals.loanTotal, color: "#111827" },
+            { label: "Purchase Price", value: instructedTotals.purchaseTotal, color: "#f59e0b" },
+          ]) as any}
+        />
+        <div className="absolute inset-0 m-auto h-24 w-24 rounded-full border border-black/10 bg-white shadow-sm" />
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="h-3 w-3 rounded-full border border-black/20" style={{ backgroundColor: "#111827" }} />
+          <div className="text-sm font-semibold text-black">Loan Amount</div>
+          <div className="ml-auto text-sm font-extrabold text-black">
+            {moneyZar(instructedTotals.loanTotal)}{" "}
+            <span className="text-xs font-semibold text-black/50">({instructedTotals.loanPct.toFixed(0)}%)</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="h-3 w-3 rounded-full border border-black/20" style={{ backgroundColor: "#f59e0b" }} />
+          <div className="text-sm font-semibold text-black">Purchase Price</div>
+          <div className="ml-auto text-sm font-extrabold text-black">
+            {moneyZar(instructedTotals.purchaseTotal)}{" "}
+            <span className="text-xs font-semibold text-black/50">({instructedTotals.purchasePct.toFixed(0)}%)</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

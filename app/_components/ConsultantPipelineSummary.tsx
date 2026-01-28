@@ -220,7 +220,7 @@ return {
 };
   }, [deals, from, to]);
 
-  const header = title || "Value per Consultant (All Stages)";
+  const header = title || "Value per Consultant (All Statuses)";
 
   return (
     <div className="mt-6 rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
@@ -228,7 +228,7 @@ return {
     <div>
       <div className="text-base font-extrabold text-black">{header}</div>
       <div className="mt-1 text-[11px] font-semibold text-black/55">
-        Ranked by weighted pipeline score (late stages count more). Tie-breakers: late-stage value, then total value.
+        Ranked by weighted pipeline score (late statuses count more). Tie-breakers: late-status value, then total value.
       </div>
     </div>
 
@@ -300,7 +300,7 @@ return {
       </div>
 
       <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-        <div className="text-[10px] font-extrabold text-black/55">Strongest late-stage</div>
+        <div className="text-[10px] font-extrabold text-black/55">Strongest late-status</div>
         {model.mostLate ? (
           <div className="mt-2 flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -332,7 +332,7 @@ return {
       <div className="col-span-1 text-right">#</div>
       <div className="col-span-5">Consultant</div>
       <div className="col-span-2 text-right">Deals</div>
-      <div className="col-span-2 text-right">Late-stage</div>
+      <div className="col-span-2 text-right">Late-status</div>
       <div className="col-span-2 text-right">Total</div>
     </div>
 

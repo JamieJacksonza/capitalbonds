@@ -53,7 +53,7 @@ export default function AipNotesSummary({ deal }: { deal: any }) {
         <div>
           <div className="text-sm font-extrabold text-black">AIP summary</div>
           <div className="text-xs font-semibold text-black/60">
-            Per-bank notes and details captured during AIP stage.
+            Per-bank notes and details captured during AIP status.
           </div>
         </div>
 

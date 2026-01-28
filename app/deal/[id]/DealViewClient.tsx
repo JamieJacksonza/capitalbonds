@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 // keep this if the file exists in your project
 import StatusBankNotesCard from "./StatusBankNotesCard";
+import { getCurrentUserClient } from "@/app/lib/user";
 
 type Props = { dealKey: string };
 type Deal = Record<string, any>;
@@ -35,6 +36,19 @@ function safeVal(v: any) {
   return String(v);
 }
 
+function dateOnly(v: any) {
+  if (!v) return "-";
+  const s = String(v).trim();
+  if (!s) return "-";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function normalizeInsurance(v: any) {
   if (v === true) return true;
   if (v === false) return false;
@@ -55,6 +69,15 @@ function hasValue(v: any) {
   if (s.toLowerCase() === "null") return false;
   if (s.toLowerCase() === "undefined") return false;
   return true;
+}
+
+function firstNonEmpty(...vals: any[]) {
+  for (const v of vals) {
+    if (v === null || v === undefined) continue;
+    const s = String(v).trim();
+    if (s) return s;
+  }
+  return "";
 }
 export default function DealViewClient({ dealKey }: Props) {
   const router = useRouter();
@@ -77,6 +100,37 @@ export default function DealViewClient({ dealKey }: Props) {
   const [registrationPaidAt, setRegistrationPaidAt] = useState<string | null>(null);
   const [registrationPaidSaving, setRegistrationPaidSaving] = useState(false);
   const [registrationPaidErr, setRegistrationPaidErr] = useState<string | null>(null);
+  const [leadSourcePaid, setLeadSourcePaid] = useState(false);
+  const [leadSourcePaidAt, setLeadSourcePaidAt] = useState<string | null>(null);
+  const [leadSourcePaidSaving, setLeadSourcePaidSaving] = useState(false);
+  const [leadSourcePaidErr, setLeadSourcePaidErr] = useState<string | null>(null);
+  const [registrationStatuses, setRegistrationStatuses] = useState<string[]>([]);
+  const [registrationStatusSaving, setRegistrationStatusSaving] = useState(false);
+  const [registrationStatusErr, setRegistrationStatusErr] = useState<string | null>(null);
+  const [showRegistrationModal, setShowRegistrationModal] = useState(false);
+  const [registrationSaving, setRegistrationSaving] = useState(false);
+  const [registrationErr, setRegistrationErr] = useState<string | null>(null);
+  const [registrationForm, setRegistrationForm] = useState({
+    registration_number: "",
+    payment_due_date: "",
+  });
+
+  async function resolveMovedBy() {
+    const local = getCurrentUserClient();
+    if (local && local !== "System") return local;
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      const name = String(json?.user?.name || "").trim();
+      if (name) {
+        try {
+          localStorage.setItem("cb_user", name);
+        } catch {}
+        return name;
+      }
+    } catch {}
+    return local || "System";
+  }
 
   useEffect(() => {
     let alive = true;
@@ -122,22 +176,101 @@ export default function DealViewClient({ dealKey }: Props) {
     setRegistrationPaid(paid === true);
     const paidAt = (deal as any)?.registration_paid_at ?? (deal as any)?.registrationPaidAt;
     setRegistrationPaidAt(paidAt ? String(paidAt) : null);
+    const lsPaid = (deal as any)?.lead_source_paid ?? (deal as any)?.leadSourcePaid;
+    setLeadSourcePaid(lsPaid === true);
+    const lsPaidAt = (deal as any)?.lead_source_paid_at ?? (deal as any)?.leadSourcePaidAt;
+    setLeadSourcePaidAt(lsPaidAt ? String(lsPaidAt) : null);
+    const rs =
+      (deal as any)?.registration_statuses ??
+      (deal as any)?.registrationStatuses ??
+      (deal as any)?.registration_status ??
+      (deal as any)?.registrationStatus ??
+      "";
+    if (Array.isArray(rs)) setRegistrationStatuses(rs.map(String));
+    else if (typeof rs === "string") setRegistrationStatuses(rs.split(",").map((s) => s.trim()).filter(Boolean));
   }, [deal]);
+
+  function seedRegistrationForm(d: any) {
+    setRegistrationForm({
+      registration_number: String(d?.registration_number ?? "").trim(),
+      payment_due_date: String(d?.payment_due_date ?? "").trim(),
+    });
+  }
 
   const summary = useMemo(() => {
     const d = deal || {};
+    const dealBanks = Array.isArray(d.deal_banks) ? d.deal_banks : [];
+    const bankWithContact = dealBanks.find((b: any) =>
+      firstNonEmpty(b?.contact_name, b?.contact_email, b?.contact_phone, b?.attorney, b?.attorney_note)
+    );
+    const contactPerson = firstNonEmpty(d.contact_person, d.contact_name, d.contactName, bankWithContact?.contact_name);
+    const attorneyRaw = firstNonEmpty(d.attorney, bankWithContact?.attorney);
+    const attorneyName = attorneyRaw;
+    const attorneyFirm = firstNonEmpty(d.attorney_firm, d.attorneyFirm, (d.attorney_details || {}).firm);
+    const attorneyTel = firstNonEmpty(
+      d.registration_attorney_tel,
+      d.attorney_tel,
+      (d.attorney_details || {}).tel,
+      bankWithContact?.contact_phone
+    );
+    const attorneyEmail = firstNonEmpty(
+      d.registration_attorney_email,
+      d.attorney_email,
+      (d.attorney_details || {}).email,
+      bankWithContact?.contact_email
+    );
+    let parsedName = attorneyName;
+    let parsedFirm = attorneyFirm;
+    let parsedTel = attorneyTel;
+    let parsedEmail = attorneyEmail;
+
+    if (parsedName) {
+      const firmMatch = parsedName.match(/\(([^)]+)\)/);
+      if (!parsedFirm && firmMatch?.[1]) parsedFirm = firmMatch[1].trim();
+      if (firmMatch?.[0]) parsedName = parsedName.replace(firmMatch[0], "").trim();
+
+      const telMatch = parsedName.match(/tel:\s*([^e]+?)(?=email:|$)/i);
+      if (!parsedTel && telMatch?.[1]) parsedTel = telMatch[1].trim();
+      const emailMatch = parsedName.match(/email:\s*([^\s]+.*)$/i);
+      if (!parsedEmail && emailMatch?.[1]) parsedEmail = emailMatch[1].trim();
+      parsedName = parsedName.replace(/tel:.*$/i, "").replace(/email:.*$/i, "").trim();
+    }
+    const hasAttorneyDetails = Boolean(parsedName || parsedFirm || parsedTel || parsedEmail || contactPerson);
+    const attorneyDetails = (
+      <div className="space-y-1 text-sm font-semibold text-black">
+        {parsedName ? <div>{parsedName}</div> : null}
+        {parsedFirm ? <div className="text-xs font-extrabold text-black/60">{parsedFirm}</div> : null}
+        {parsedTel ? <div className="text-xs font-semibold text-black/70">Tel: {parsedTel}</div> : null}
+        {parsedEmail ? <div className="text-xs font-semibold text-black/70">Email: {parsedEmail}</div> : null}
+        {contactPerson ? <div className="text-xs font-semibold text-black/60">Contact: {contactPerson}</div> : null}
+      </div>
+    );
     return [
-      { label: "Deal Deck ID", value: d.deal_deck_id ?? d.code  },
       { label: "Applicant", value: d.applicant  },
-      { label: "Amount", value: d.amount_zar != null ? fmtMoneyZar(d.amount_zar) : (d.amount != null ? fmtMoneyZar(d.amount) : "-") },
+      { label: "Ops number", value: d.deal_deck_id ?? d.code  },
+      { label: "Bond amount", value: d.amount_zar != null ? fmtMoneyZar(d.amount_zar) : (d.amount != null ? fmtMoneyZar(d.amount) : "-") },
+      { label: "Purchase amount", value: d.purchase_price ?? d.purchasePrice ? fmtMoneyZar(d.purchase_price ?? d.purchasePrice) : "-" },
       { label: "Consultant", value: d.consultant  },
-      { label: "Agent", value: d.agent_name ?? d.agent  },
-      { label: "Attorney", value: d.attorney  },
+      { label: "Lead Source", value: d.agent_name ?? d.agent  },
+      { label: "Attorney Details", value: hasAttorneyDetails ? attorneyDetails : "-" },
+      { label: "Instructed Date", value: dateOnly(d.instructed_date ?? d.instructed_at ?? d.stage_updated_at ?? d.updated_at) },
+      {
+        label: "Estimated Reg Date",
+        value: dateOnly(
+          d.estimated_reg_date ??
+            d.estimatedRegDate ??
+            d.instructed_estimated_reg_date ??
+            d.instructedEstimatedRegDate
+        ),
+      },
+      {
+        label: "Bond Due Date",
+        value: dateOnly(d.bond_due_date ?? d.bondDueDate),
+      },
       { label: "NTU Reason", value: d.ntu_reason ?? d.ntuReason },
-      { label: "Stage", value: d.stage  },
-      { label: "Submitted Date", value: d.submitted_date  },
+      { label: "Status", value: d.stage  },
+      { label: "Submitted Date", value: dateOnly(d.submitted_date)  },
       { label: "Property Address", value: d.property_address  },
-      ...((d.insurance_needed === true || String(d.insurance_needed ?? "").trim().toLowerCase() === "yes" || String(d.insurance_needed ?? "").trim() === "1") ? [{ label: "Insurance Needed", value: d.insurance_needed }] : []),
       { label: "Registration Ref", value: d.registration_attorney_reference ?? d.registration_reference  },
       { label: "Registration No.", value: d.registration_number  },
       { label: "Payment Due Date", value: d.payment_due_date  },
@@ -171,9 +304,7 @@ export default function DealViewClient({ dealKey }: Props) {
     searchParams.get("from") === "registrations" ||
     String((deal as any)?.stage || "").toLowerCase() === "registrations";
 
-  const showAttorneyInput =
-    searchParams.get("from") === "instructed" ||
-    String((deal as any)?.stage || "").toLowerCase() === "instructed";
+  const showAttorneyInput = false;
 
   const showNtuInput =
     searchParams.get("from") === "ntu" ||
@@ -182,6 +313,17 @@ export default function DealViewClient({ dealKey }: Props) {
   const showRegistrationPaid =
     searchParams.get("from") === "registrations" ||
     String((deal as any)?.stage || "").toLowerCase() === "registrations";
+
+  const showInstructedStatus =
+    searchParams.get("from") === "instructed" ||
+    String((deal as any)?.stage || "").toLowerCase() === "instructed";
+
+  const REG_STATUS_OPTIONS = [
+    "Attorney contacted",
+    "Client signed documents",
+    "Lodged",
+    "Registered",
+  ];
 
   async function saveInsurance(next: boolean, prev: boolean) {
     if (!dealKey) return;
@@ -327,13 +469,124 @@ export default function DealViewClient({ dealKey }: Props) {
     }
   }
 
+  async function saveLeadSourcePaid(next: boolean, prevPaid: boolean, prevAt: string | null) {
+    if (!dealKey) return;
+    setLeadSourcePaidSaving(true);
+    setLeadSourcePaidErr(null);
+
+    const paidAt = next ? new Date().toISOString() : null;
+
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lead_source_paid: next, lead_source_paid_at: paidAt }),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Failed to update lead source paid (${res.status})`);
+      }
+
+      setDeal((prevDeal) =>
+        prevDeal
+          ? {
+              ...prevDeal,
+              lead_source_paid: next,
+              lead_source_paid_at: paidAt,
+            }
+          : prevDeal
+      );
+      setLeadSourcePaidAt(paidAt);
+    } catch (e: any) {
+      setLeadSourcePaidErr(e?.message || "Failed to update lead source paid");
+      setLeadSourcePaid(prevPaid);
+      setLeadSourcePaidAt(prevAt);
+    } finally {
+      setLeadSourcePaidSaving(false);
+    }
+  }
+
+  async function saveRegistrationStatuses(next: string[]) {
+    if (!dealKey) return;
+    setRegistrationStatusSaving(true);
+    setRegistrationStatusErr(null);
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ registration_statuses: next }),
+      });
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Failed to update registration status (${res.status})`);
+      }
+      setDeal((prevDeal) => (prevDeal ? { ...prevDeal, registration_statuses: next } : prevDeal));
+    } catch (e: any) {
+      setRegistrationStatusErr(e?.message || "Failed to update registration status");
+    } finally {
+      setRegistrationStatusSaving(false);
+    }
+  }
+
+  async function saveRegistrationAndMove() {
+    if (!dealKey) return;
+    setRegistrationSaving(true);
+    setRegistrationErr(null);
+
+    try {
+      const nextStatuses = Array.from(new Set([...registrationStatuses, "Registered"]));
+      const regPayload = {
+        registration_statuses: nextStatuses,
+        registration_number: registrationForm.registration_number || null,
+        payment_due_date: registrationForm.payment_due_date || null,
+      };
+
+      const patchRes = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(regPayload),
+      });
+      const patchJson = await patchRes.json().catch(() => ({} as any));
+      if (!patchRes.ok || patchJson?.ok === false) {
+        throw new Error(patchJson?.error || `Failed to save registration info (${patchRes.status})`);
+      }
+
+      const movedBy = await resolveMovedBy();
+      if (!movedBy || movedBy === "System") {
+        throw new Error("Please log in again so we can record who moved this deal.");
+      }
+
+      const moveRes = await fetch("/api/deals/move", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-cb-user": movedBy || "" },
+        cache: "no-store",
+        body: JSON.stringify({
+          dealId: dealKey,
+          toStage: "registrations",
+          stageData: regPayload,
+          movedBy,
+        }),
+      });
+
+      const moveJson = await moveRes.json().catch(() => ({} as any));
+      if (!moveRes.ok || moveJson?.ok === false) {
+        throw new Error(moveJson?.error || `Failed to move to registrations (${moveRes.status})`);
+      }
+
+      setShowRegistrationModal(false);
+      router.push("/registrations");
+    } catch (e: any) {
+      setRegistrationErr(e?.message || "Failed to save registration info");
+    } finally {
+      setRegistrationSaving(false);
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-xl font-extrabold text-black">Deal View</div>
-          <div className="text-sm font-semibold text-black/60">Key: {dealKey}</div>
-        </div>
+        <div />
 
         <div className="flex items-center gap-2">
           {showRegistrationPaid ? (
@@ -427,7 +680,7 @@ export default function DealViewClient({ dealKey }: Props) {
           </div>
         ) : null}
 
-        {showRegistrationPaid ? (
+        {showRegistrationPaid && !registrationPaid ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -461,6 +714,40 @@ export default function DealViewClient({ dealKey }: Props) {
           </div>
         ) : null}
 
+        {showRegistrationPaid && !leadSourcePaid ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-extrabold text-black/45">Lead Source Paid</div>
+                <div className="text-sm font-semibold text-black/70">Toggle on when lead source is paid.</div>
+                {leadSourcePaidAt ? (
+                  <div className="mt-1 text-xs font-semibold text-black/50">
+                    Paid on {new Date(leadSourcePaidAt).toLocaleString("en-ZA")}
+                  </div>
+                ) : null}
+              </div>
+              <label className="flex items-center gap-2 text-sm font-extrabold text-black">
+                <input
+                  type="checkbox"
+                  checked={leadSourcePaid}
+                  disabled={leadSourcePaidSaving}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    const prevPaid = leadSourcePaid;
+                    const prevAt = leadSourcePaidAt;
+                    setLeadSourcePaid(next);
+                    saveLeadSourcePaid(next, prevPaid, prevAt);
+                  }}
+                />
+                {leadSourcePaid ? "Paid" : "Not paid"}
+              </label>
+            </div>
+            {leadSourcePaidErr ? (
+              <div className="mt-2 text-xs font-semibold text-red-600">{leadSourcePaidErr}</div>
+            ) : null}
+          </div>
+        ) : null}
+
         {showRegistrationPaid && registrationPaid ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
             <div className="text-[11px] font-extrabold text-black/45">Payment Status</div>
@@ -473,72 +760,163 @@ export default function DealViewClient({ dealKey }: Props) {
           </div>
         ) : null}
 
-        {showInsuranceToggle ? (
+        {showRegistrationPaid && leadSourcePaid ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[11px] font-extrabold text-black/45">Insurance Needed</div>
-                <div className="text-sm font-semibold text-black/70">Toggle on if the client requests insurance.</div>
-              </div>
-              <label className="flex items-center gap-2 text-sm font-extrabold text-black">
-                <input
-                  type="checkbox"
-                  checked={insuranceNeeded}
-                  disabled={insuranceSaving}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    const prev = insuranceNeeded;
-                    setInsuranceNeeded(next);
-                    saveInsurance(next, prev);
-                  }}
-                />
-                {insuranceNeeded ? "On" : "Off"}
-              </label>
+            <div className="text-[11px] font-extrabold text-black/45">Lead Source Paid</div>
+            <div className="mt-1 text-sm font-extrabold text-black">Paid</div>
+            <div className="mt-1 text-xs font-semibold text-black/60">
+              {leadSourcePaidAt
+                ? `Paid on ${new Date(leadSourcePaidAt).toLocaleString("en-ZA")}`
+                : "Payment date not recorded yet."}
             </div>
-            {insuranceErr ? (
-              <div className="mt-2 text-xs font-semibold text-red-600">{insuranceErr}</div>
+          </div>
+        ) : null}
+
+        {showRegistrationPaid ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="text-[11px] font-extrabold text-black/45">Insurance request sent</div>
+            <div className="mt-1 text-sm font-extrabold text-black">
+              {dateOnly((deal as any)?.instructed_date ?? (deal as any)?.instructed_at ?? (deal as any)?.stage_updated_at ?? (deal as any)?.updated_at)}
+            </div>
+          </div>
+        ) : null}
+
+        {showInstructedStatus ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="text-[11px] font-extrabold text-black/45">Status</div>
+            <div className="text-sm font-semibold text-black/70">Select all that apply.</div>
+
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {REG_STATUS_OPTIONS.filter((opt) => !registrationStatuses.includes(opt)).map((opt) => (
+                <label key={opt} className="flex items-center gap-2 text-sm font-semibold text-black">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={(e) => {
+                      if (!e.target.checked) return;
+                      const next = Array.from(new Set([...registrationStatuses, opt]));
+                      setRegistrationStatuses(next);
+                      if (opt === "Registered") {
+                        seedRegistrationForm(deal);
+                        setRegistrationErr(null);
+                        setShowRegistrationModal(true);
+                        return;
+                      }
+                      saveRegistrationStatuses(next);
+                    }}
+                  />
+                  {opt}
+                </label>
+              ))}
+            </div>
+
+            {registrationStatusErr ? (
+              <div className="mt-2 text-xs font-semibold text-red-600">{registrationStatusErr}</div>
             ) : null}
           </div>
         ) : null}
 
-        {showInsuranceToggle ? (
+        {showInstructedStatus ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[11px] font-extrabold text-black/45">Insurance Email</div>
-                <div className="text-sm font-semibold text-black/70">
-                  Send insurance details via Make.com.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={sendInsuranceEmail}
-                disabled={insuranceSendSaving}
-                className="rounded-xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90 disabled:opacity-60"
-              >
-                {insuranceSendSaving ? "Sending..." : "Send Insurance Email"}
-              </button>
+            <div className="text-[11px] font-extrabold text-black/45">Status</div>
+            <div className="mt-1 text-sm font-extrabold text-black">
+              {registrationStatuses.length ? registrationStatuses.join(", ") : "-"}
             </div>
-            {insuranceSendMsg ? (
-              <div
-                className={[
-                  "mt-2 text-xs font-semibold",
-                  insuranceSendMsg.type === "ok" ? "text-black/70" : "text-red-600",
-                ].join(" ")}
-              >
-                {insuranceSendMsg.text}
+          </div>
+        ) : null}
+
+        {showRegistrationModal ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+              <div className="text-sm font-extrabold text-black">Registration info</div>
+              <div className="mt-1 text-xs font-semibold text-black/60">
+                Save registration details before moving this deal to Registrations.
               </div>
-            ) : null}
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="text-xs font-extrabold text-black/60">
+                  Registration number
+                  <input
+                    value={registrationForm.registration_number}
+                    onChange={(e) =>
+                      setRegistrationForm((prev) => ({ ...prev, registration_number: e.target.value }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                  />
+                </label>
+                <label className="text-xs font-extrabold text-black/60">
+                  Payment due date
+                  <input
+                    type="date"
+                    value={registrationForm.payment_due_date}
+                    onChange={(e) =>
+                      setRegistrationForm((prev) => ({ ...prev, payment_due_date: e.target.value }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                  />
+                </label>
+              </div>
+
+              {registrationErr ? (
+                <div className="mt-3 text-xs font-semibold text-red-600">{registrationErr}</div>
+              ) : null}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={saveRegistrationAndMove}
+                  disabled={registrationSaving}
+                  className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+                >
+                  {registrationSaving ? "Saving..." : "Save & move to Registrations"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRegistrationModal(false);
+                    setRegistrationErr(null);
+                    const next = registrationStatuses.filter((v) => v !== "Registered");
+                    setRegistrationStatuses(next);
+                    saveRegistrationStatuses(next);
+                  }}
+                  disabled={registrationSaving}
+                  className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showRegistrationPaid ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="text-[11px] font-extrabold text-black/45">Status</div>
+            <div className="mt-1 text-sm font-extrabold text-black">
+              {registrationStatuses.length ? registrationStatuses.join(", ") : "-"}
+            </div>
           </div>
         ) : null}
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-          {summary.filter((s:any)=>hasValue((s as any).value)).map((it) => (
-            <div key={it.label} className="rounded-xl border border-black/10 bg-white p-4">
-              <div className="text-[11px] font-extrabold text-black/45">{it.label}</div>
-              <div className="text-sm font-extrabold text-black">{safeVal(it.value)}</div>
-            </div>
-          ))}
+          {summary
+            .filter((s: any) => {
+              if (s.label === "Estimated Reg Date") return true;
+              return hasValue((s as any).value);
+            })
+            .map((it: any) => {
+            const isNode = React.isValidElement(it.value);
+            return (
+              <div key={it.label} className="rounded-xl border border-black/10 bg-white p-4">
+                <div className="text-[11px] font-extrabold text-black/45">{it.label}</div>
+                {isNode ? (
+                  <div className="mt-1">{it.value}</div>
+                ) : (
+                  <div className="text-sm font-extrabold text-black">{safeVal(it.value)}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -550,7 +928,9 @@ export default function DealViewClient({ dealKey }: Props) {
           stage={((deal as any)?.stage ?? undefined) as any}
           hideEmptyNotes={
             searchParams.get("from") === "registrations" ||
-            String((deal as any)?.stage || "").toLowerCase() === "registrations"
+            String((deal as any)?.stage || "").toLowerCase() === "registrations" ||
+            searchParams.get("from") === "instructed" ||
+            String((deal as any)?.stage || "").toLowerCase() === "instructed"
           }
 />
       </div>

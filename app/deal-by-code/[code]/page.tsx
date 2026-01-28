@@ -27,7 +27,7 @@ function kv(d: any) {
     ["Deal Code", d?.deal_code ?? d?.dealCode],
     ["Applicant", d?.applicant],
     ["Bank", d?.bank],
-    ["Stage", d?.stage],
+    ["Status", d?.stage],
     ["Consultant", d?.consultant],
     ["Agent", d?.agent_name ?? d?.agentName],
     ["Attorney/Firm", d?.registration_attorney ?? d?.attorney],

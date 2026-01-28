@@ -182,7 +182,7 @@ export default function ConsultantPipelinePerformance({
       ? "Registrations Value per Consultant"
       : stage
       ? "Value per Consultant"
-      : "Value per Consultant (All Stages)");
+      : "Value per Consultant (All Statuses)");
 
   return (
     <div className="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
@@ -223,7 +223,7 @@ export default function ConsultantPipelinePerformance({
               <div className="text-[10px] font-extrabold text-black/45">Legend</div>
 
               {model.pie.length === 0 ? (
-                <div className="text-xs font-semibold text-black/40">No deals in this stage.</div>
+                <div className="text-xs font-semibold text-black/40">No deals in this status.</div>
               ) : (
                 model.pie.map((r) => (
                   <div key={r.name} className="flex items-center justify-between gap-3">
@@ -253,7 +253,7 @@ export default function ConsultantPipelinePerformance({
             </div>
 
             {model.rows.length === 0 ? (
-              <div className="px-3 py-3 text-xs font-semibold text-black/40">No deals in this stage.</div>
+              <div className="px-3 py-3 text-xs font-semibold text-black/40">No deals in this status.</div>
             ) : (
               model.rows.map((r) => (
                 <div

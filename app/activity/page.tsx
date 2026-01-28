@@ -174,7 +174,7 @@ export default function ActivityPage() {
           <div className="col-span-2">Time</div>
           <div className="col-span-2">Deal</div>
           <div className="col-span-3">Moved By</div>
-          <div className="col-span-5">Stage</div>
+          <div className="col-span-5">Status</div>
         </div>
 
         {loading && <div className="px-4 py-6 text-sm font-semibold text-black/60">Loading...</div>}

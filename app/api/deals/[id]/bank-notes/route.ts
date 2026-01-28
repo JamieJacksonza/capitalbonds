@@ -63,7 +63,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
     const { data, error } = await sb
       .from("bank_notes")
-      .select("id, deal_id, stage, bank_name, bank_notes, updated_at")
+      .select("id, deal_id, stage, bank_name, bank_notes, bank_reference, updated_at")
       .eq("deal_id", dealId)
       .eq("stage", stage)
       .order("bank_name", { ascending: true });
@@ -93,6 +93,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         stage,
         bank_name: name,
         bank_notes: "",
+        bank_reference: "",
         updated_at: new Date().toISOString(),
       }));
     }
@@ -120,6 +121,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       .map((r: any) => ({
         bank_name: String(r?.bank_name || "").trim(),
         bank_notes: String(r?.bank_notes || "").trim(),
+        bank_reference: String(r?.bank_reference || "").trim(),
       }))
       .filter((r: any) => r.bank_name.length > 0);
 
@@ -139,6 +141,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       stage,
       bank_name: r.bank_name,
       bank_notes: r.bank_notes,
+      bank_reference: r.bank_reference,
     }));
 
     const ins = await sb.from("bank_notes").insert(insertRows);

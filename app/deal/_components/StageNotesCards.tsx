@@ -123,7 +123,7 @@ export default function StageNotesCards({
     <div className="mt-4 space-y-4">
       <div className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-extrabold text-black">Stage notes</div>
+          <div className="text-sm font-extrabold text-black">Status notes</div>
           <div className="text-xs font-semibold text-black/50">
             {loading ? "Loading" : `${items.length} activity items`}
           </div>
@@ -207,7 +207,7 @@ export default function StageNotesCards({
                   {loading ? (
                     <div className="h-16 rounded-xl bg-zinc-100" />
                   ) : list.length === 0 ? (
-                    <div className="text-sm font-semibold text-black/40">No activity recorded for this stage yet.</div>
+                    <div className="text-sm font-semibold text-black/40">No activity recorded for this status yet.</div>
                   ) : (
                     list.map((a, idx) => {
                       const who = String(a?.actor || a?.moved_by || "system");

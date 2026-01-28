@@ -13,6 +13,7 @@ type BankApiRow = {
   id?: string | number | null;
   bank_name?: string | null;
   bank_notes?: string | null;
+  bank_reference?: string | null;
 };
 
 const BANKS = [
@@ -52,10 +53,10 @@ export default function StatusBankNotesCard({ dealKey, amountZar, stage, hideEmp
   const key = useMemo(() => String(dealKey ?? "").trim(), [dealKey]);
   const stageKey = useMemo(() => "global", []);
 const [rows, setRows] = useState<
-    Record<BankKey, { id?: string; bank_name: BankKey; note: string }>
+    Record<BankKey, { id?: string; bank_name: BankKey; note: string; reference: string }>
   >(() => {
     const base: any = {};
-    for (const b of BANKS) base[b.key] = { bank_name: b.key, note: "", id: undefined };
+    for (const b of BANKS) base[b.key] = { bank_name: b.key, note: "", reference: "", id: undefined };
     return base;
   });
 
@@ -83,7 +84,7 @@ const [rows, setRows] = useState<
         const apiBanks: BankApiRow[] = Array.isArray(json?.rows) ? json.rows : [];
 
         const next: any = {};
-        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: "", id: undefined };
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: "", reference: "", id: undefined };
 
         for (const r of apiBanks) {
           const name = normBankName(r?.bank_name);
@@ -91,6 +92,7 @@ const [rows, setRows] = useState<
           next[name] = {
             bank_name: name,
             note: String(r?.bank_notes ?? "").trim(),
+            reference: String(r?.bank_reference ?? "").trim(),
             id: r?.id ? String(r.id) : undefined,
           };
         }
@@ -122,6 +124,7 @@ const [rows, setRows] = useState<
       return {
         bank_name: b.key,
         bank_notes: String(r?.note ?? "").trim(),
+        bank_reference: String(r?.reference ?? "").trim(),
       };
     }),
   };
@@ -150,7 +153,7 @@ return (
         <div>
           <div className="text-sm font-extrabold text-black">Bank notes</div>
           <div className="mt-1 text-[11px] font-semibold text-black/60">
-            Stage: <span className="font-extrabold text-black/80">All stages</span>
+            Status: <span className="font-extrabold text-black/80">All statuses</span>
             {amountLine ? (
               <>
                 {" "}
@@ -187,17 +190,32 @@ return (
         {BANKS.filter((b) => {
           if (!hideEmptyNotes) return true;
           const note = String(rows[b.key]?.note ?? "").trim();
-          return Boolean(note);
+          const ref = String(rows[b.key]?.reference ?? "").trim();
+          return Boolean(note || ref);
         }).map((b) => (
           <div key={b.key} className="rounded-2xl border border-black/10 bg-white p-3">
             <div className="text-xs font-extrabold text-black/70">{b.label}</div>
+            <input
+              value={rows[b.key]?.reference ?? ""}
+              onChange={(e) =>
+                setRows((prev) => ({
+                  ...prev,
+                  [b.key]: {
+                    ...(prev[b.key] || { bank_name: b.key, note: "", reference: "" }),
+                    reference: e.target.value,
+                  },
+                }))
+              }
+              placeholder="Reference number"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
             <textarea
               value={rows[b.key]?.note ?? ""}
               onChange={(e) =>
                 setRows((prev) => ({
                   ...prev,
                   [b.key]: {
-                    ...(prev[b.key] || { bank_name: b.key, note: "" }),
+                    ...(prev[b.key] || { bank_name: b.key, note: "", reference: "" }),
                     note: e.target.value,
                   },
                 }))

@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import MoveStageCards from "./MoveStageCards";
 
 function normalizeStage(s: any) {
   const v = String(s ?? "").trim().toLowerCase();
@@ -126,6 +127,8 @@ export default function MoveDealModal(props: { open: boolean; onClose: () => voi
   const [movedBy, setMovedBy] = useState("");
   const [stageNotes, setStageNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showStagePrompt, setShowStagePrompt] = useState(false);
+  const [stageConfirmed, setStageConfirmed] = useState(false);
   
   const [stageData, setStageData] = useState<any>({});
 const [err, setErr] = useState<string | null>(null);
@@ -140,8 +143,20 @@ const [err, setErr] = useState<string | null>(null);
     notes: "",
   });
 
+  useEffect(() => {
+    if (normalizeStage(nextStage) !== "instructed") setInsuranceNeeded(null);
+  }, [nextStage]);
+
+
   const currentStage = normalizeStage(d?.stage);
   const target = extractDealKey(d) || extractDealKey(deal);
+  const nextStageOptions = useMemo(() => {
+    if (currentStage === "instructed") return ["ntu", "registrations"];
+    if (currentStage === "submitted") return ["aip", "ntu"];
+    if (currentStage === "aip") return ["granted", "ntu"];
+    if (currentStage === "granted") return ["instructed", "ntu"];
+    return ["submitted", "aip", "instructed", "granted", "ntu", "registrations"];
+  }, [currentStage]);
   useEffect(() => {
     if (!open) return;
 
@@ -170,8 +185,12 @@ const [err, setErr] = useState<string | null>(null);
       } catch {}
     })();
 
-    setNextStage(normalizeStage(deal?.stage) || "aip");
+    {
+      const cur = normalizeStage(deal?.stage);
+      setNextStage(cur === "instructed" ? "ntu" : (cur || "aip"));
+    }
     setStageNotes("");
+    setStageConfirmed(false);
     setAipBanks({});
     setInstr({
       attorney_firm: "",
@@ -249,6 +268,10 @@ const [err, setErr] = useState<string | null>(null);
     setInstr((p) => ({ ...p, [field]: value }));
   }
 
+  function requiresStageInputs(stage: string) {
+    return ["aip", "granted", "instructed", "registrations", "ntu"].includes(String(stage));
+  }
+
   async function confirm() {
     const key = String(target || "").trim();
     if (!key) {
@@ -260,6 +283,10 @@ const [err, setErr] = useState<string | null>(null);
     setErr(null);
 
     const stage = normalizeStage(nextStage) || currentStage || "submitted";
+    if (requiresStageInputs(stage) && !stageConfirmed) {
+      setShowStagePrompt(true);
+      return;
+    }
     const movedByLocal = movedBy?.trim()
       ? movedBy.trim()
       : (typeof window !== "undefined" ? (localStorage.getItem("cb_user") || "").trim() : "");
@@ -409,14 +436,16 @@ const [err, setErr] = useState<string | null>(null);
           <div className="grid gap-3">
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="grid gap-1">
-                <div className="text-[11px] font-extrabold text-black/70">Next stage</div>
-                <select value={nextStage} onChange={(e) => setNextStage(e.target.value)} className={selectSm}>
-                  <option value="submitted">Submitted</option>
-                  <option value="aip">AIP</option>
-                  <option value="instructed">Instructed</option>
-                  <option value="granted">Granted</option>
-                  <option value="ntu">NTU</option>
-                  <option value="registrations">Registrations</option>
+                <div className="text-[11px] font-extrabold text-black/70">Next status</div>
+                <select value={nextStage} onChange={(e) => {
+                  setNextStage(e.target.value);
+                  setStageConfirmed(false);
+                }} className={selectSm}>
+                  {nextStageOptions.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt === "aip" ? "AIP" : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -425,141 +454,6 @@ const [err, setErr] = useState<string | null>(null);
                 <input value={movedBy} onChange={(e) => setMovedBy(e.target.value)} placeholder="Name (optional)" className={inputSm} />
               </label>
             </div>
-
-            {normalizeStage(nextStage) === "aip" && (
-              <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
-                <div className="text-[13px] font-extrabold text-black">AIP bank details (per bank)</div>
-                <div className="mt-1 text-[11px] font-semibold text-black/60">
-                  Add notes + representative details per bank.
-                </div>
-
-                <div className="mt-2 grid gap-2">
-                  {banks.length === 0 ? (
-                    <div className="text-[12px] font-semibold text-black/60">No banks found on this deal.</div>
-                  ) : (
-                    banks.map((b) => {
-                      const f = aipBanks[b.key] || {};
-  const bankNames = (() => {
-    const srcBanks: any[] =
-      (Array.isArray((fullDeal as any)?.banks) ? (fullDeal as any).banks : []) ||
-      (Array.isArray((deal as any)?.banks) ? (deal as any).banks : []);
-
-    const names = (Array.isArray(srcBanks) ? srcBanks : [])
-      .map((b: any) =>
-        String(b?.bank_name ?? b?.bankName ?? b?.name ?? b?.bank ?? b ?? "").trim()
-      )
-      .filter(Boolean);
-
-    const norm = (s: string) => s.trim().toLowerCase();
-    const seen = new Set<string>();
-    const out: string[] = [];
-
-    for (const n of names) {
-      const k = norm(n);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push(n);
-    }
-
-    // fallback to single deal.bank ONLY if it's not "Multiple"
-    const single = String((deal as any)?.bank ?? "").trim();
-    if (!out.length && single && norm(single) !== "multiple") out.push(single);
-
-    return out;
-  })();
-
-  const banksDetected = bankNames.length;
-  return (
-                        <div key={b.key} className="rounded-2xl border border-black/10 bg-white p-3">
-                          <div className="text-[11px] font-extrabold text-black/70">{b.bank_name}</div>
-
-                          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                            <label className="grid gap-1">
-                              <div className={labelSm}>Status</div>
-                              
-                            </label>
-
-                            <label className="grid gap-1 sm:col-span-2">
-                              <div className={labelSm}>Reference</div>
-                              <input value={f.reference || ""} onChange={(e) => setAipField(b.key, "reference", e.target.value)} placeholder="AIP reference" className={inputSm} />
-                            </label>
-
-                            <label className="grid gap-1">
-                              <div className={labelSm}>Amount</div>
-                              <input value={f.amount || ""} onChange={(e) => setAipField(b.key, "amount", e.target.value)} placeholder="e.g. 850000" className={inputSm} />
-                            </label>
-
-                            <label className="grid gap-1">
-                              <div className={labelSm}>Rate</div>
-                              <input value={f.rate || ""} onChange={(e) => setAipField(b.key, "rate", e.target.value)} placeholder="e.g. Prime - 1" className={inputSm} />
-                            </label>
-
-                            <label className="grid gap-1">
-                              <div className={labelSm}>Term</div>
-                              <input value={f.term || ""} onChange={(e) => setAipField(b.key, "term", e.target.value)} placeholder="e.g. 240 months" className={inputSm} />
-                            </label>
-
-                            <label className="grid gap-1 sm:col-span-2">
-                              <div className={labelSm}>Bank representative name</div>
-                              <input value={f.representative_name || ""} onChange={(e) => setAipField(b.key, "representative_name", e.target.value)} placeholder="e.g. Sarah Jacobs" className={inputSm} />
-                            </label>
-
-                            <label className="grid gap-1">
-                              <div className={labelSm}>Rep contact</div>
-                              <input value={f.representative_contact || ""} onChange={(e) => setAipField(b.key, "representative_contact", e.target.value)} placeholder="Phone or email" className={inputSm} />
-                            </label>
-                          </div>
-
-                          <label className="mt-2 grid gap-1">
-                            <div className={labelSm}>Bank note (timestamped)</div>
-                            <textarea value={f.note || ""} onChange={(e) => setAipField(b.key, "note", e.target.value)} rows={2} placeholder={`Note for ${b.bank_name}`} className={inputSm} />
-                          </label>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-
-            {normalizeStage(nextStage) === "instructed" && (
-              <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3">
-                <div className="text-[13px] font-extrabold text-black">Instructed details</div>
-                <div className="mt-1 text-[11px] font-semibold text-black/60">Attorney details + instructed note.</div>
-
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <label className="grid gap-1">
-                    <div className={labelSm}>Attorney firm</div>
-                    <input value={instr.attorney_firm || ""} onChange={(e) => setInstrField("attorney_firm", e.target.value)} placeholder="Firm name" className={inputSm} />
-                  </label>
-
-                  <label className="grid gap-1">
-                    <div className={labelSm}>Attorney name</div>
-                    <input value={instr.attorney_name || ""} onChange={(e) => setInstrField("attorney_name", e.target.value)} placeholder="Attorney / contact name" className={inputSm} />
-                  </label>
-
-                  <label className="grid gap-1">
-                    <div className={labelSm}>Email</div>
-                    <input value={instr.attorney_email || ""} onChange={(e) => setInstrField("attorney_email", e.target.value)} placeholder="email@firm.com" className={inputSm} />
-                  </label>
-
-                  <label className="grid gap-1">
-                    <div className={labelSm}>Telephone</div>
-                    <input value={instr.attorney_tel || ""} onChange={(e) => setInstrField("attorney_tel", e.target.value)} placeholder="Phone" className={inputSm} />
-                  </label>
-
-                  <label className="grid gap-1 sm:col-span-2">
-                    <div className={labelSm}>Reference</div>
-                    <input value={instr.attorney_ref || ""} onChange={(e) => setInstrField("attorney_ref", e.target.value)} placeholder="Matter / ref" className={inputSm} />
-                  </label>
-
-                  <label className="grid gap-1 sm:col-span-2">
-                    <div className={labelSm}>Instructed notes (timestamped)</div>
-                    <textarea value={instr.notes || ""} onChange={(e) => setInstrField("notes", e.target.value)} rows={2} placeholder="Note saved with a timestamp..." className={inputSm} />
-                  </label>
-                </div>
-              </div>
-            )}
 
             <label className="grid gap-1">
               <div className="text-[11px] font-extrabold text-black/70">Notes (timestamped)</div>
@@ -590,6 +484,46 @@ const [err, setErr] = useState<string | null>(null);
         </div>
       </div>
     </div>
+    {showStagePrompt ? (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-4 shadow-xl">
+          <div className="text-sm font-extrabold text-black">Additional details required</div>
+          <div className="mt-1 text-xs font-semibold text-black/60">
+            Please complete the required inputs for this status.
+          </div>
+
+          <div className="mt-3">
+            <MoveStageCards
+              toStage={nextStage}
+              deal={deal}
+              setStageData={setStageData}
+              stageData={stageData}
+            />
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              className="flex-1 rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+              onClick={() => {
+                setStageConfirmed(true);
+                setShowStagePrompt(false);
+                confirm();
+              }}
+            >
+              Continue
+            </button>
+            <button
+              type="button"
+              className="flex-1 rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+              onClick={() => setShowStagePrompt(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
   );
 }
 

@@ -249,7 +249,7 @@ export default function StageBoard() {
                 <div className="text-xs font-extrabold text-black/60">Move Deal</div>
                 <div className="mt-1 truncate text-xl font-extrabold text-black">{targetDeal.applicant}</div>
                 <div className="mt-1 text-sm font-semibold text-black/70">
-                  Choose stage + add per-bank notes.
+                  Choose status + add per-bank notes.
                 </div>
               </div>
 
@@ -273,7 +273,7 @@ export default function StageBoard() {
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <div>
-                <div className="text-xs font-extrabold text-black">Move to stage</div>
+                <div className="text-xs font-extrabold text-black">Move to status</div>
                 <select
                   value={toStage}
                   onChange={(e) => setToStage(e.target.value as Stage)}
@@ -298,7 +298,7 @@ export default function StageBoard() {
             <div className="mt-6">
               <div className="text-sm font-extrabold text-black">Bank notes for {stageTitle[toStage]}</div>
               <div className="mt-1 text-xs font-bold text-black/60">
-                These notes are stored per bank per stage.
+                These notes are stored per bank per status.
               </div>
 
               <div className="mt-4 space-y-3">

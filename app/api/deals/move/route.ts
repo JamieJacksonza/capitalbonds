@@ -37,6 +37,26 @@ function toBoolOrNull(v: any) {
   return null;
 }
 
+async function sendInsuranceWebhook(deal: any, meta: { movedBy?: any; note?: any; stageData?: any }) {
+  const url = process.env.MAKE_INSURANCE_WEBHOOK_URL;
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "insurance_needed",
+        deal,
+        movedBy: meta?.movedBy ?? null,
+        note: meta?.note ?? null,
+        stageData: meta?.stageData ?? null,
+      }),
+    });
+  } catch (e) {
+    console.error("INSURANCE_WEBHOOK_ERROR:", e);
+  }
+}
+
 async function handle(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any));
   console.log('MOVE DEBUG bodyKeys=', Object.keys(body||{}), 'stageDataType=', typeof (body as any)?.stageData, 'stageDataKeys=', ((body as any)?.stageData && typeof (body as any).stageData === 'object') ? Object.keys((body as any).stageData) : null);
@@ -114,6 +134,10 @@ const nowIso = new Date().toISOString();
     last_moved_by: movedBy,
   };
 
+  const insuranceRaw = pickFirst(stageData, body, ["insurance_needed", "insuranceNeeded", "insurance"]);
+  const insuranceParsed = toBoolOrNull(insuranceRaw);
+  if (insuranceParsed !== null) updates.insurance_needed = insuranceParsed;
+
   // Persist a few known deal columns if present (columns seen in your /api/deals/:id output)
   const attorneyVal = pickFirst(stageData, body, ["attorney", "Attorney"]);
   if (attorneyVal !== undefined) updates.attorney = attorneyVal ? String(attorneyVal) : null;
@@ -148,6 +172,9 @@ const nowIso = new Date().toISOString();
 
   const due = pickFirst(stageData, body, ["payment_due_date", "paymentDueDate", "dueDate"]);
   if (due !== undefined) updates.payment_due_date = due ? String(due).slice(0, 10) : null;
+
+  const estReg = pickFirst(stageData, body, ["estimated_reg_date", "estimatedRegDate", "instructed_estimated_reg_date"]);
+  if (estReg !== undefined) updates.estimated_reg_date = estReg ? String(estReg).slice(0, 10) : null;
 
   const comm = pickFirst(stageData, body, ["agent_comm_paid", "agentCommPaid", "commissionPaid"]);
   if (comm !== undefined) updates.agent_comm_paid = toBoolOrNull(comm);
@@ -184,6 +211,13 @@ const nowIso = new Date().toISOString();
     moved_at: nowIso,
     note: typeof note === "string" && note.trim() ? note.trim() : null,
   });
+
+  if (toStage === "instructed") {
+    const { data: dealRow } = await supabase.from("deals").select("*").eq("id", dealId).single();
+    if (dealRow) {
+      await sendInsuranceWebhook(dealRow, { movedBy, note, stageData });
+    }
+  }
 
   return NextResponse.json({ ok: true });
 }

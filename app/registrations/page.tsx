@@ -1,5 +1,5 @@
-import StageTable from "../_components/StageTable";
+import RegistrationsTable from "../_components/RegistrationsTable";
 
 export default function RegistrationsPage() {
-  return <StageTable stage="registrations" />;
+  return <RegistrationsTable />;
 }
