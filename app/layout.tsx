@@ -5,6 +5,10 @@ import AppTopBar from "./_components/AppTopBar";
 export const metadata: Metadata = {
   title: "Capital Bonds Dashboard",
   description: "Internal pipeline dashboard for bond applications.",
+  icons: {
+    icon: "/capital-bonds-logo.svg",
+    apple: "/capital-bonds-logo.svg",
+  },
 };
 
 export default function RootLayout({
