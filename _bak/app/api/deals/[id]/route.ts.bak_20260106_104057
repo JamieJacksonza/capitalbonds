@@ -1,0 +1,120 @@
+export const runtime = "nodejs";
+
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function getSupabaseServer() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing env NEXT_PUBLIC_SUPABASE_URL");
+  const key = service || anon;
+  if (!key) throw new Error("Missing env SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function fromTable(sb: any, table: string) {
+  const schema = process.env.SUPABASE_DB_SCHEMA || "public";
+  return typeof sb.schema === "function" ? sb.schema(schema).from(table) : sb.from(table);
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+export async function PATCH(req: Request) {
+  const id = getIdFromUrl(req);
+  if (!id) return json({ ok: false, error: "Missing id" }, 400);
+
+  let body: any = {};
+  try { body = await req.json(); } catch { body = {}; }
+
+  const supabase = getSupabaseServer();
+
+  const toStage =
+    typeof body?.toStage === "string"
+      ? body.toStage
+      : typeof body?.stage === "string"
+      ? body.stage
+      : null;
+
+  const movedBy = typeof body?.movedBy === "string" ? body.movedBy : null;
+  const note = typeof body?.note === "string" ? body.note : "";
+
+  // Accept registration fields from EITHER:
+  // 1) body.registration.{...}
+  // 2) body.{registration_attorney,...} (flat)
+  const registration =
+    body?.registration && typeof body.registration === "object" ? body.registration : null;
+
+  const hasOwn = (obj: any, key: string) => obj && Object.prototype.hasOwnProperty.call(obj, key);
+
+  const regVal = (key: string) => {
+    if (hasOwn(registration, key)) return (registration as any)[key];
+    if (hasOwn(body, key)) return body[key];
+    return undefined;
+  };
+
+  // IMPORTANT: We IGNORE bankNotes completely for now.
+  // This removes ALL dependency on public.banks / deal_banks during stage moves.
+
+  const update: Record<string, any> = {};
+
+  if (toStage) update.stage = toStage;
+
+  // Store general note into deals.notes
+  if (note && String(note).trim()) update.notes = String(note).trim();
+
+  if (movedBy) {
+    update.last_moved_by = movedBy;
+    update.last_moved_at = new Date().toISOString();
+  }
+
+  // registrations fields (only write if user actually sent a value/key)
+  v = regVal("registration_number"); if (v -ne $null -or (hasOwn(registration,"registration_number") -or hasOwn(body,"registration_number"))) { update.registration_number = v ?? null; }
+  v = regVal("registration_attorney"); if (v -ne $null -or (hasOwn(registration,"registration_attorney") -or hasOwn(body,"registration_attorney"))) { update.registration_attorney = v ?? null; }
+  v = regVal("registration_attorney_tel"); if (v -ne $null -or (hasOwn(registration,"registration_attorney_tel") -or hasOwn(body,"registration_attorney_tel"))) { update.registration_attorney_tel = v ?? null; }
+  v = regVal("registration_attorney_contact"); if (v -ne $null -or (hasOwn(registration,"registration_attorney_contact") -or hasOwn(body,"registration_attorney_contact"))) { update.registration_attorney_contact = v ?? null; }
+  v = regVal("agent_comm_paid"); if (v -ne $null -or (hasOwn(registration,"agent_comm_paid") -or hasOwn(body,"agent_comm_paid"))) { update.agent_comm_paid = v ?? null; }
+  v = regVal("payment_due_date"); if (v -ne $null -or (hasOwn(registration,"payment_due_date") -or hasOwn(body,"payment_due_date"))) { update.payment_due_date = v ?? null; }
+
+  // If update is empty, avoid a blank update call
+  if (Object.keys(update).length === 0) {
+    return json({ ok: false, error: "No valid fields provided to update." }, 400);
+  }
+
+  // Support UUID id OR deal_code fallback
+  let q = fromTable(supabase, "deals").update(update);
+  if (isUuid(id)) q = q.eq("id", id);
+  else q = q.eq("deal_code", id);
+
+  const res = await q
+    .select("id, deal_code, stage, notes, last_moved_by, last_moved_at, registration_number, registration_attorney, registration_attorney_tel, registration_attorney_contact, agent_comm_paid, payment_due_date")
+    .single();
+
+  if (res.error) {
+    console.error("DEALS_PATCH_ERROR:", res.error);
+    return json({ ok: false, where: "deals.update", error: res.error.message }, 500);
+  }
+
+  return json({ ok: true, deal: res.data });
+}

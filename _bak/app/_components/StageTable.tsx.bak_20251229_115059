@@ -1,0 +1,408 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useDeals, type Stage } from "@/app/_components/useDeals";
+
+function money(n: number) {
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
+}
+
+function getUserSafe() {
+  try {
+    return (localStorage.getItem("cb_user") || "System").trim() || "System";
+  } catch {
+    return "System";
+  }
+}
+
+function getAmount(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  return Number.isFinite(n) ? n : 0;
+}
+
+type BankRow = {
+  id: string;
+  bank_name?: string | null;
+  bank?: string | null;
+  bank_notes?: string | null;
+  attorney?: string | null;
+  attorney_note?: string | null;
+};
+
+type DealRow = {
+  id: string;
+  applicant?: string;
+  consultant?: string;
+  stage: Stage;
+  banks?: BankRow[];
+  bank?: string;
+  amount?: number;
+  amount_zar?: number;
+};
+
+type Draft = Record<
+  string,
+  {
+    note: string;
+    attorney: string;
+    attorney_note: string;
+  }
+>;
+
+async function saveBankNotes(dealId: string, payload: any) {
+  const url = `/api/deals/${encodeURIComponent(dealId)}/bank-notes`;
+
+  // Prefer PATCH, fall back to POST if your route only supports POST
+  let res = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 405) {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Failed to save bank info (${res.status})`);
+  }
+  return data;
+}
+
+export default function StageTable(props: { stage: Stage; title: string; subtitle?: string }) {
+  const { stage, title, subtitle } = props;
+
+  const { byStage, loading, error, refreshAll, moveDealToStage } = useDeals();
+
+  const deals = useMemo(() => {
+    const list = (byStage(stage) || []) as any[];
+    // newest-ish first if created_at exists
+    return list.slice().sort((a, b) => {
+      const ax = new Date(a?.created_at || a?.submitted_date || 0).getTime();
+      const bx = new Date(b?.created_at || b?.submitted_date || 0).getTime();
+      return bx - ax;
+    });
+  }, [byStage, stage]);
+
+  const [openId, setOpenId] = useState<string>("");
+  const [draft, setDraft] = useState<Draft>({});
+  const [saving, setSaving] = useState(false);
+  const [moveNote, setMoveNote] = useState("");
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const openDeal = useMemo(() => deals.find((d: any) => d.id === openId) as DealRow | undefined, [deals, openId]);
+  const banks = useMemo(() => (openDeal?.banks || []) as BankRow[], [openDeal]);
+
+  function openModal(deal: DealRow) {
+    const b = (deal.banks || []) as BankRow[];
+
+    const nextDraft: Draft = {};
+    for (const row of b) {
+      const bankId = String(row.id);
+      nextDraft[bankId] = {
+        note: String(row.bank_notes ?? ""),
+        attorney: String(row.attorney ?? ""),
+        attorney_note: String(row.attorney_note ?? ""),
+      };
+    }
+
+    setDraft(nextDraft);
+    setMoveNote("");
+    setMsg(null);
+    setOpenId(deal.id);
+  }
+
+  function closeModal() {
+    setOpenId("");
+    setDraft({});
+    setMoveNote("");
+    setMsg(null);
+  }
+
+  async function onSaveOnly() {
+    if (!openDeal) return;
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      const actor = getUserSafe();
+      const bankNotes = banks.map((b) => ({
+        bankId: b.id,
+        note: draft[b.id]?.note ?? "",
+        attorney: draft[b.id]?.attorney ?? "",
+        attorney_note: draft[b.id]?.attorney_note ?? "",
+      }));
+
+      await saveBankNotes(openDeal.id, { actor, stage: openDeal.stage, bankNotes });
+
+      setMsg({ type: "ok", text: "Saved bank notes + attorney details." });
+      await refreshAll();
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to save bank info." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onSaveAndMoveToGranted() {
+    if (!openDeal) return;
+
+    // Require attorney details before moving to Granted
+    const missing = banks.filter((b) => !(draft[b.id]?.attorney || "").trim());
+    if (missing.length > 0) {
+      setMsg({
+        type: "err",
+        text: `Attorney / firm is required for: ${missing
+          .map((b) => (b.bank_name || b.bank || "Bank").toString())
+          .join(", ")}`,
+      });
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      const actor = getUserSafe();
+      const bankNotes = banks.map((b) => ({
+        bankId: b.id,
+        note: draft[b.id]?.note ?? "",
+        attorney: draft[b.id]?.attorney ?? "",
+        attorney_note: draft[b.id]?.attorney_note ?? "",
+      }));
+
+      await saveBankNotes(openDeal.id, { actor, stage: openDeal.stage, bankNotes });
+
+      // Move deal to Granted
+      await moveDealToStage(openDeal.id, "granted", { movedBy: actor, note: moveNote });
+
+      setMsg({ type: "ok", text: "Saved bank info and moved to Granted." });
+      await refreshAll();
+
+      // close after a short pause so user sees success
+      setTimeout(() => closeModal(), 600);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to save/move." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 px-6 py-10">
+      <header className="space-y-2">
+        <div className="text-xs font-extrabold text-black/60">Stage</div>
+        <h1 className="text-3xl font-extrabold tracking-tight text-black">{title}</h1>
+        {subtitle ? <p className="text-sm font-semibold text-black/70">{subtitle}</p> : null}
+      </header>
+
+      <div className="rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="flex items-center justify-between px-5 py-4">
+          <div className="text-sm font-extrabold text-black">{deals.length} deals</div>
+          <button
+            onClick={() => refreshAll()}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="px-5 pb-6 text-sm font-semibold text-black/70">Loading...</div>
+        ) : error ? (
+          <div className="px-5 pb-6 text-sm font-semibold text-red-700">{error}</div>
+        ) : deals.length === 0 ? (
+          <div className="px-5 pb-6 text-sm font-semibold text-black/70">No deals in this stage.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="border-t border-black/10 bg-black/[0.02]">
+                <tr className="text-xs font-extrabold text-black/60">
+                  <th className="px-5 py-3">Applicant</th>
+                  <th className="px-5 py-3">Banks</th>
+                  <th className="px-5 py-3">Amount</th>
+                  <th className="px-5 py-3">Consultant</th>
+                  <th className="px-5 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deals.map((d: any) => {
+                  const dd = d as DealRow;
+                  const b = (dd.banks || []) as BankRow[];
+                  const bankLabel =
+                    b.length > 0 ? b.map((x) => x.bank_name || x.bank || "Bank").join(", ") : String(dd.bank || "—");
+                  const amount = getAmount(dd);
+
+                  return (
+                    <tr key={dd.id} className="border-t border-black/10">
+                      <td className="px-5 py-4">
+                        <Link href={`/deal/${encodeURIComponent(dd.id)}`} className="text-sm font-extrabold text-black hover:underline">
+                          {dd.applicant || "—"}
+                        </Link>
+                        <div className="mt-1 text-xs font-bold text-black/50 break-all">{dd.id}</div>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="text-sm font-semibold text-black">{bankLabel}</div>
+                        <div className="mt-1 text-xs font-bold text-black/50">Per-bank notes + attorney info</div>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="text-sm font-extrabold text-black">{money(amount)}</div>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="text-sm font-semibold text-black">{dd.consultant || "—"}</div>
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        <button
+                          onClick={() => openModal(dd)}
+                          className="rounded-xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+                        >
+                          Update banks
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal */}
+      {openDeal ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+          <div className="w-full max-w-3xl rounded-2xl border border-black/10 bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-black/10 p-5">
+              <div>
+                <div className="text-xs font-extrabold text-black/60">Instructed deal</div>
+                <div className="mt-1 text-lg font-extrabold text-black">{openDeal.applicant || "Applicant"}</div>
+                <div className="mt-1 text-xs font-bold text-black/50 break-all">{openDeal.id}</div>
+              </div>
+              <button
+                onClick={closeModal}
+                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto p-5 space-y-4">
+              {msg ? (
+                <div
+                  className={
+                    "rounded-2xl border p-3 text-sm font-extrabold " +
+                    (msg.type === "ok" ? "border-black/10 bg-black/[0.03] text-black" : "border-red-200 bg-red-50 text-red-700")
+                  }
+                >
+                  {msg.text}
+                </div>
+              ) : null}
+
+              {banks.length === 0 ? (
+                <div className="text-sm font-semibold text-black/70">
+                  No banks found on this deal. (This means deal_banks rows are missing for this deal.)
+                </div>
+              ) : (
+                banks.map((b) => {
+                  const id = String(b.id);
+                  const d = draft[id] || { note: "", attorney: "", attorney_note: "" };
+                  const name = (b.bank_name || b.bank || "Bank").toString();
+
+                  return (
+                    <div key={id} className="rounded-2xl border border-black/10 bg-white p-4">
+                      <div className="text-sm font-extrabold text-black">{name}</div>
+
+                      <div className="mt-3">
+                        <div className="text-xs font-extrabold text-black">Bank notes</div>
+                        <textarea
+                          value={d.note}
+                          onChange={(e) => setDraft((prev) => ({ ...prev, [id]: { ...d, note: e.target.value } }))}
+                          placeholder="Update bank notes for this deal..."
+                          className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                        />
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-extrabold text-black">Attorney / Firm (required for Granted)</div>
+                          <input
+                            value={d.attorney}
+                            onChange={(e) => setDraft((prev) => ({ ...prev, [id]: { ...d, attorney: e.target.value } }))}
+                            placeholder="e.g. Smith Attorneys"
+                            className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="text-xs font-extrabold text-black">Attorney note</div>
+                          <input
+                            value={d.attorney_note}
+                            onChange={(e) => setDraft((prev) => ({ ...prev, [id]: { ...d, attorney_note: e.target.value } }))}
+                            placeholder="Short attorney note (optional)"
+                            className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              <div className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="text-xs font-extrabold text-black">Move note (optional)</div>
+                <input
+                  value={moveNote}
+                  onChange={(e) => setMoveNote(e.target.value)}
+                  placeholder="Optional note for activity log..."
+                  className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+                <div className="mt-2 text-xs font-bold text-black/50">
+                  Tip: Save first. “Save + Move to Granted” requires an attorney/firm for every bank.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/10 p-5">
+              <div className="text-xs font-bold text-black/60">
+                Consultant: <span className="text-black">{openDeal.consultant || "—"}</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  disabled={saving}
+                  onClick={onSaveOnly}
+                  className="rounded-xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03] disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save bank info"}
+                </button>
+
+                <button
+                  disabled={saving}
+                  onClick={onSaveAndMoveToGranted}
+                  className="rounded-xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+                >
+                  {saving ? "Working..." : "Save + Move to Granted"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

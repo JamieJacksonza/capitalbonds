@@ -1,0 +1,20 @@
+﻿import * as DealViewMod from "./DealViewClient";
+
+const DealViewClient =
+  (DealViewMod as any).default ??
+  (DealViewMod as any).DealViewClient ??
+  (DealViewMod as any).DealView;
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+type PageProps = {
+  params: Promise<{ id: string }> | { id: string };
+};
+
+export default async function DealDetailPage({ params }: PageProps) {
+  const p = await Promise.resolve(params);
+  const dealKey = decodeURIComponent(String(p?.id || "")).trim();
+  return <DealViewClient dealKey={dealKey} />;
+}
+

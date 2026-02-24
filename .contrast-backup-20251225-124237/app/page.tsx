@@ -1,0 +1,58 @@
+﻿import Link from "next/link";
+
+const cards = [
+  { title: "Submitted", href: "/submitted", value: 0, note: "New applications received" },
+  { title: "Granted", href: "/granted", value: 0, note: "Approved and granted deals" },
+  { title: "AIP", href: "/aip", value: 0, note: "Approved in principle" },
+  { title: "Instructed", href: "/instructed", value: 0, note: "Deals sent for instruction" },
+  { title: "NTU", href: "/ntu", value: 0, note: "Not taken up" },
+];
+
+export default function HomePage() {
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-extrabold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-black/80">
+          Overview of your bond pipeline stages.
+        </p>
+      </header>
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {cards.map((c) => (
+          <Link
+            key={c.title}
+            href={c.href}
+            className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm hover:shadow-md transition"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-bold text-black/70">{c.title}</div>
+              <span className="rounded-full bg-black/[0.05] px-2.5 py-1 text-xs font-bold text-black/70 border border-black/10">
+                Open
+              </span>
+            </div>
+            <div className="mt-3 text-4xl font-extrabold tracking-tight">{c.value}</div>
+            <div className="mt-2 text-sm text-black/80">{c.note}</div>
+          </Link>
+        ))}
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-extrabold">Power BI Area</h2>
+          <p className="text-sm text-black/80">
+            Next weâ€™ll embed your live Power BI dashboards here (securely).
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-dashed border-black/20 bg-black/[0.02] p-6">
+          <div className="text-sm font-bold">Embed placeholder</div>
+          <div className="mt-1 text-sm text-black/80">
+            Weâ€™ll add a Power BI embed component and wire auth later.
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+

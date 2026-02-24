@@ -1,0 +1,426 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+const CONSULTANTS = ["Kristie", "Elmarie", "Cindy", "Chelsea"] as const;
+
+const BANK_OPTIONS = [
+  "FNB",
+  "Standard Bank",
+  "ABSA",
+  "Nedbank",
+  "Capitec",
+  "Investec",
+  "Discovery Bank",
+  "Other",
+] as const;
+
+type BankRow = {
+  bank_name: string;
+  amount_zar: string; // keep as string for input
+  reference_number: string;
+  contact_name: string;
+  contact_email: string;
+  contact_phone: string;
+};
+
+function toNum(v: any) {
+  const n = typeof v === "string" ? Number(v) : Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export default function NewSubmissionPage() {
+  const [applicant, setApplicant] = useState("");
+  const [applicantEmail, setApplicantEmail] = useState("");
+  const [applicantCell, setApplicantCell] = useState("");
+
+  const [amount, setAmount] = useState<string>(""); // client requested amount (NOT cumulative)
+  const amountNum = useMemo(() => toNum(amount), [amount]);
+
+  const [agentName, setAgentName] = useState("");
+
+  const [consultant, setConsultant] = useState<string>(() => {
+    if (typeof window === "undefined") return "Kristie";
+    try {
+      return localStorage.getItem("cb_user") || "Kristie";
+    } catch {
+      return "Kristie";
+    }
+  });
+
+  const [banks, setBanks] = useState<BankRow[]>([
+    {
+      bank_name: "FNB",
+      amount_zar: "",
+      reference_number: "",
+      contact_name: "",
+      contact_email: "",
+      contact_phone: "",
+    },
+  ]);
+
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [createdId, setCreatedId] = useState<string>("");
+
+  function updateBank(idx: number, patch: Partial<BankRow>) {
+    setBanks((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
+  }
+
+  function addBank() {
+    setBanks((prev) => [
+      ...prev,
+      {
+        bank_name: "Standard Bank",
+        amount_zar: "",
+        reference_number: "",
+        contact_name: "",
+        contact_email: "",
+        contact_phone: "",
+      },
+    ]);
+  }
+
+  function removeBank(idx: number) {
+    setBanks((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setCreatedId("");
+
+    const cleanApplicant = applicant.trim();
+    const cleanConsultant = consultant.trim();
+    const cleanAgent = agentName.trim();
+    const cleanNotes = notes.trim();
+    const cleanEmail = applicantEmail.trim();
+    const cleanCell = applicantCell.trim();
+
+    if (!cleanApplicant) {
+      setMsg({ type: "err", text: "Applicant is required." });
+      return;
+    }
+
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setMsg({ type: "err", text: "Client amount must be a valid number." });
+      return;
+    }
+
+    if (!banks.length) {
+      setMsg({ type: "err", text: "Please add at least one bank." });
+      return;
+    }
+
+    const normalizedBanks = banks.map((b) => ({
+      bank_name: String(b.bank_name || "").trim(),
+      amount_zar: toNum(b.amount_zar) > 0 ? toNum(b.amount_zar) : amountNum, // default to client amount
+      reference_number: String(b.reference_number || "").trim() || null,
+      contact_name: String(b.contact_name || "").trim() || null,
+      contact_email: String(b.contact_email || "").trim() || null,
+      contact_phone: String(b.contact_phone || "").trim() || null,
+    }));
+
+    const hasBadBank = normalizedBanks.some((b) => !b.bank_name);
+    if (hasBadBank) {
+      setMsg({ type: "err", text: "Each bank row must have a bank name." });
+      return;
+    }
+
+    const primaryBank = normalizedBanks.length > 1 ? "Multiple" : normalizedBanks[0].bank_name;
+
+    try {
+      setSubmitting(true);
+
+      const res = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          applicant: cleanApplicant,
+          applicant_email: cleanEmail || null,
+          applicant_cell: cleanCell || null,
+          consultant: cleanConsultant,
+          agent_name: cleanAgent || null,
+
+          // client requested amount (not cumulative)
+          amount: amountNum,
+
+          // keep for backwards compatibility in case your route still expects it
+          bank: primaryBank,
+
+          notes: cleanNotes || null,
+
+          // multi-bank payload
+          banks: normalizedBanks,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        setMsg({ type: "err", text: data?.error || `Request failed (${res.status})` });
+        return;
+      }
+
+      const id = String(data?.record?.id || data?.id || "");
+      setCreatedId(id);
+
+      setMsg({ type: "ok", text: "Submission created successfully." });
+
+      // reset
+      setApplicant("");
+      setApplicantEmail("");
+      setApplicantCell("");
+      setAmount("");
+      setAgentName("");
+      setNotes("");
+      setBanks([
+        {
+          bank_name: "FNB",
+          amount_zar: "",
+          reference_number: "",
+          contact_name: "",
+          contact_email: "",
+          contact_phone: "",
+        },
+      ]);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Something went wrong submitting." });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
+      <header className="space-y-2">
+        <div className="text-xs font-extrabold text-black/60">Submitted</div>
+        <h1 className="text-3xl font-extrabold tracking-tight text-black">New Submission</h1>
+        <p className="text-sm font-semibold text-black/70">
+          Client info + requested amount + bank entries. Clean and simple.
+        </p>
+      </header>
+
+      <form onSubmit={onSubmit} className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm space-y-6">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="text-xs font-extrabold text-black">Applicant</div>
+            <input
+              value={applicant}
+              onChange={(e) => setApplicant(e.target.value)}
+              placeholder="e.g. John Smith"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Consultant</div>
+            <select
+              value={consultant}
+              onChange={(e) => {
+                setConsultant(e.target.value);
+                try {
+                  localStorage.setItem("cb_user", e.target.value);
+                } catch {}
+              }}
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            >
+              {CONSULTANTS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Agent</div>
+            <input
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              placeholder="e.g. Thando"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Client Amount (ZAR)</div>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="numeric"
+              placeholder="e.g. 2000000"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+            <div className="mt-2 text-xs font-bold text-black/50">
+              This is the client requested amount (not summed across banks).
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Client Email</div>
+            <input
+              value={applicantEmail}
+              onChange={(e) => setApplicantEmail(e.target.value)}
+              placeholder="e.g. client@email.com"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">Client Cell</div>
+            <input
+              value={applicantCell}
+              onChange={(e) => setApplicantCell(e.target.value)}
+              placeholder="e.g. 0721234567"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-black/10 bg-white p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-extrabold text-black">Banks</div>
+              <div className="text-xs font-bold text-black/60">Add as many banks as needed.</div>
+            </div>
+
+            <button
+              type="button"
+              onClick={addBank}
+              className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+            >
+              + Add bank
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {banks.map((b, idx) => (
+              <div key={idx} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Bank</div>
+                    <select
+                      value={b.bank_name}
+                      onChange={(e) => updateBank(idx, { bank_name: e.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    >
+                      {BANK_OPTIONS.map((x) => (
+                        <option key={x} value={x}>
+                          {x}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Bank Amount (optional)</div>
+                    <input
+                      value={b.amount_zar}
+                      onChange={(e) => updateBank(idx, { amount_zar: e.target.value })}
+                      inputMode="numeric"
+                      placeholder="Defaults to client amount"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="w-full">
+                      <div className="text-xs font-extrabold text-black">Reference #</div>
+                      <input
+                        value={b.reference_number}
+                        onChange={(e) => updateBank(idx, { reference_number: e.target.value })}
+                        placeholder="Optional"
+                        className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                      />
+                    </div>
+
+                    {banks.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => removeBank(idx)}
+                        className="h-[46px] rounded-2xl border border-black/10 bg-white px-4 text-xs font-extrabold text-black hover:border-black/20"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact name</div>
+                    <input
+                      value={b.contact_name}
+                      onChange={(e) => updateBank(idx, { contact_name: e.target.value })}
+                      placeholder="Optional"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact email</div>
+                    <input
+                      value={b.contact_email}
+                      onChange={(e) => updateBank(idx, { contact_email: e.target.value })}
+                      placeholder="Optional"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-extrabold text-black">Contact phone</div>
+                    <input
+                      value={b.contact_phone}
+                      onChange={(e) => updateBank(idx, { contact_phone: e.target.value })}
+                      placeholder="Optional"
+                      className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs font-extrabold text-black">Notes (overall)</div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Anything important..."
+            className="mt-2 min-h-[120px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+          />
+        </div>
+
+        {msg ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-4">
+            <div className="text-sm font-extrabold text-black">{msg.text}</div>
+            {createdId ? (
+              <div className="mt-2 text-xs font-bold text-black/60">
+                Reference: <span className="text-black">{createdId}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting ? "Submitting..." : "Submit"}
+          </button>
+
+          <Link
+            href="/submitted"
+            className="rounded-2xl border border-black/10 bg-white px-5 py-3 text-sm font-extrabold text-black hover:border-black/20"
+          >
+            Back to Submitted
+          </Link>
+        </div>
+      </form>
+    </div>
+  );
+}

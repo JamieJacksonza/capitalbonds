@@ -1,0 +1,210 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const API_BUILD = "2026-01-04_moves_post_fix_v2";
+
+function json(data: any, status = 200) {
+  return new NextResponse(JSON.stringify({ api_build: API_BUILD, ...data }), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function getSupabase() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    "";
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+  if (!url) throw new Error("Missing SUPABASE URL at runtime (.env.local).");
+  if (!key) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY at runtime. Restart dev server (Ctrl+C then npm run dev).");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeStage(v: any) {
+  if (v === "" || v === undefined || v === null) return null;
+  let s = String(v).trim().toLowerCase();
+  if (!s) return null;
+
+  // common synonyms / typos
+  if (s === "registration") s = "registrations";
+  if (s === "regs") s = "registrations";
+  if (s === "reg") s = "registrations";
+
+  return s;
+}
+
+const STAGES_ALLOWED = new Set([
+  "submitted",
+  "aip",
+  "instructed",
+  "granted",
+  "ntu",
+  "registrations",
+]);
+
+async function resolveDealId(supabase: any, idOrCode: string) {
+  const key = String(idOrCode || "").trim();
+  if (!key) return null;
+
+  if (isUuid(key)) return key;
+
+  // deal_code lookup (exact first, then ilike fallback)
+  let r = await supabase.from("deals").select("id").eq("deal_code", key).maybeSingle();
+  if (!r.data && !r.error) {
+    r = await supabase.from("deals").select("id").ilike("deal_code", key).maybeSingle();
+  }
+  if (r.error) throw new Error(r.error.message);
+  return r.data?.id ?? null;
+}
+
+async function readBody(req: Request) {
+  // Browser fetch sends valid JSON, curl/PS sometimes doesn't.
+  try {
+    return await req.json();
+  } catch {
+    const raw = await req.text();
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(`Invalid JSON body. Received: ${raw.slice(0, 200)}`);
+    }
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    const supabase = getSupabase();
+    const url = new URL(req.url);
+
+    const dealCode = (url.searchParams.get("deal_code") || url.searchParams.get("dealCode") || "").trim();
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "200", 10) || 200, 1), 1000);
+
+    let q = supabase
+      .from("deal_activity")
+      .select("*")
+      .order("moved_at", { ascending: false })
+      .limit(limit);
+
+    if (dealCode) q = q.ilike("deal_code", dealCode);
+
+    const r = await q;
+    if (r.error) return json({ ok: false, error: r.error.message }, 500);
+
+    return json({ ok: true, moves: r.data ?? [] }, 200);
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message ?? "Unknown error" }, 500);
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const supabase = getSupabase();
+    const body = await readBody(req);
+
+    // accept multiple client key names
+    const codeOrId =
+      String(
+        body?.dealCode ??
+        body?.deal_code ??
+        body?.code ??
+        body?.id ??
+        body?.dealId ??
+        ""
+      ).trim();
+
+    const toStageRaw =
+      body?.toStage ??
+      body?.to_stage ??
+      body?.nextStage ??
+      body?.next_stage ??
+      body?.stage ??
+      null;
+
+    const toStage = normalizeStage(toStageRaw);
+    const movedBy = String(body?.movedBy ?? body?.moved_by ?? body?.actor ?? "system").trim() || "system";
+    const movedAt = body?.movedAt ?? body?.moved_at ?? new Date().toISOString();
+    const note = String(body?.note ?? "").trim() || null;
+
+    if (!codeOrId) return json({ ok: false, error: "Missing deal code/id in body (dealCode/deal_code/id)." }, 400);
+    if (!toStage) return json({ ok: false, error: "Missing destination stage (toStage/nextStage/stage)." }, 400);
+    if (!STAGES_ALLOWED.has(toStage)) {
+      return json({ ok: false, error: `Invalid stage '${toStage}'. Allowed: ${Array.from(STAGES_ALLOWED).join(", ")}` }, 400);
+    }
+
+    const dealId = await resolveDealId(supabase, codeOrId);
+    if (!dealId) return json({ ok: false, error: "Deal not found" }, 404);
+
+    // load current state
+    const before = await supabase
+      .from("deals")
+      .select("id, deal_code, stage")
+      .eq("id", dealId)
+      .maybeSingle();
+
+    if (before.error) return json({ ok: false, error: before.error.message }, 500);
+    if (!before.data) return json({ ok: false, error: "Deal not found" }, 404);
+
+    const fromStage = normalizeStage(before.data.stage);
+
+    // update deal stage (this is the REAL move)
+    const upd = await supabase
+      .from("deals")
+      .update({
+        stage: toStage,
+        last_moved_by: movedBy,
+        last_moved_at: movedAt,
+      })
+      .eq("id", dealId)
+      .select("*")
+      .maybeSingle();
+
+    if (upd.error) return json({ ok: false, error: upd.error.message }, 500);
+    if (!upd.data) return json({ ok: false, error: "Deal not found after update" }, 404);
+
+    // hard verify
+    if (normalizeStage(upd.data.stage) !== toStage) {
+      return json(
+        { ok: false, error: "Stage update did not apply (DB returned a different stage).", requestedStage: toStage, dbStage: upd.data.stage },
+        409
+      );
+    }
+
+    // log activity (board/moves feed)
+    if (fromStage !== toStage) {
+      const ins = await supabase.from("deal_activity").insert({
+        deal_id: upd.data.id,
+        deal_code: upd.data.deal_code,
+        from_stage: fromStage,
+        to_stage: toStage,
+        moved_by: movedBy,
+        moved_at: movedAt,
+        note,
+        actor: movedBy,
+        action: "move",
+      });
+
+      if (ins.error) {
+        // don't lie: if logging fails, return an error so the UI stops saying success
+        return json({ ok: false, error: "Deal moved but activity log failed (deal_activity insert error).", detail: ins.error.message }, 500);
+      }
+    }
+
+    return json({ ok: true, deal: upd.data }, 200);
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message ?? "Unknown error" }, 500);
+  }
+}

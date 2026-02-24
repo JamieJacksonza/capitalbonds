@@ -1,0 +1,182 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "submitted";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+function stageToRoute(stage: string) {
+  const s = normalizeStage(stage);
+  return "/" + encodeURIComponent(s);
+}
+
+export default function DealMovePanel() {
+  const router = useRouter();
+  const params = useParams() as any;
+  const sp = useSearchParams();
+
+  const target = useMemo(() => {
+    const pId = params?.id ? String(params.id) : "";
+    const pCode = params?.code ? String(params.code) : "";
+    const qCode = sp?.get("code") ? String(sp.get("code")) : "";
+    return (pId || pCode || qCode || "").trim();
+  }, [params, sp]);
+
+  const [open, setOpen] = useState(false);
+  const [nextStage, setNextStage] = useState("aip");
+  const [note, setNote] = useState("");
+  const [movedBy, setMovedBy] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const v =
+        (typeof window !== "undefined" &&
+          (localStorage.getItem("cb_user") ||
+            localStorage.getItem("user") ||
+            localStorage.getItem("name"))) ||
+        "";
+      if (v && !movedBy) setMovedBy(String(v));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function patchDealByKey(key: string) {
+    const endpoint = `/api/deals/${encodeURIComponent(key)}`;
+    return fetch(endpoint, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        // send both shapes so your API can accept either
+        toStage: normalizeStage(nextStage),
+        stage: normalizeStage(nextStage),
+        note: note?.trim() ? note.trim() : null,
+        notes: note?.trim() ? note.trim() : null,
+        movedBy: movedBy?.trim() ? movedBy.trim() : null,
+      }),
+    });
+  }
+
+  async function doMove() {
+    if (!target) {
+      setErr("Could not detect deal id/code from the URL.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    try {
+      // 1) try direct (works if API accepts UUID or deal_code)
+      let res = await patchDealByKey(target);
+
+      // 2) fallback: if target is deal_code but API only accepts UUID
+      if (!res.ok) {
+        const listRes = await fetch("/api/deals", { cache: "no-store" });
+        const listJson = await listRes.json().catch(() => ({}));
+        const arr = Array.isArray(listJson)
+          ? listJson
+          : Array.isArray(listJson?.data)
+          ? listJson.data
+          : [];
+
+        const match =
+          arr.find((d: any) => String(d?.deal_code ?? d?.dealCode ?? "").trim() === target) ||
+          arr.find((d: any) => String(d?.id ?? "").trim() === target);
+
+        if (match?.id) {
+          res = await patchDealByKey(String(match.id));
+        }
+      }
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Move failed (${res.status})`);
+      }
+
+      const stage = normalizeStage(nextStage);
+      router.push(stageToRoute(stage));
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Move failed");
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Move this deal ✅ MARKER  MARKER</div>
+          <div className="text-xs font-semibold text-black/60">
+            Deal ref: <span className="font-extrabold text-black">{target || ""}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm"
+        >
+          {open ? "Close" : "Move"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 grid gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={nextStage}
+              onChange={(e) => setNextStage(e.target.value)}
+              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black outline-none"
+            >
+              <option value="submitted">Submitted</option>
+              <option value="aip">AIP</option>
+              <option value="instructed">Instructed</option>
+              <option value="granted">Granted</option>
+              <option value="ntu">NTU</option>
+              <option value="registrations">Registrations</option>
+            </select>
+
+            <input
+              value={movedBy}
+              onChange={(e) => setMovedBy(e.target.value)}
+              placeholder="Moved by (optional)"
+              className="min-w-[220px] flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+            />
+          </div>
+
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add a note (this will carry with the move ✅ MARKER  MARKER)"
+            rows={3}
+            className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={doMove}
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-60"
+            >
+              {busy ? "Moving..." : "Confirm Move ✅ MARKER  MARKER"}
+            </button>
+
+            {err && <div className="text-sm font-semibold text-red-600">{err}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

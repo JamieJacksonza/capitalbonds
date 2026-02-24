@@ -1,0 +1,195 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+export type Stage =
+  | "submitted"
+  | "aip"
+  | "instructed"
+  | "granted"
+  | "ntu"
+  | "registrations";
+
+export const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu", "registrations"];
+
+export type Deal = {
+  id: string;
+  stage: Stage;
+  deal_code?: string;
+  applicant?: string;
+  consultant?: string;
+  agent_name?: string;
+  attorney?: string | null;
+  amount_zar?: number;
+  amount?: number;
+  [key: string]: any;
+};
+
+type DealsResponse = { ok: boolean; deals?: any[]; error?: string };
+
+function toNum(v: any): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v == null) return 0;
+  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function amt(d: any): number {
+  return toNum(d?.amount_zar ?? d?.amount ?? 0);
+}
+
+function asStage(v: any): Stage {
+  const s = String(v ?? "submitted").trim().toLowerCase();
+  if (s === "submitted" || s === "aip" || s === "instructed" || s === "granted" || s === "ntu" || s === "registrations") return s as Stage;
+  return "submitted";
+}
+
+function key(v: any): string {
+  const s = String(v ?? "").trim();
+  return s.length ? s : "Unknown";
+}
+
+function groupTotals(deals: Deal[], pick: (d: Deal) => any) {
+  const map: Record<string, { name: string; count: number; total: number }> = {};
+  for (const d of deals) {
+    const k = key(pick(d));
+    if (!map[k]) map[k] = { name: k, count: 0, total: 0 };
+    map[k].count += 1;
+    map[k].total += amt(d);
+  }
+  return Object.values(map).sort((a, b) => b.total - a.total);
+}
+
+export function useDeals() {
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const refreshAll = useCallback(async () => {
+    controllerRef.current?.abort();
+    const ac = new AbortController();
+    controllerRef.current = ac;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/deals", { cache: "no-store", signal: ac.signal });
+      const data: DealsResponse = await res.json().catch(() => ({ ok: false, error: "Bad JSON from /api/deals" }));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `GET /api/deals failed (${res.status})`);
+      }
+
+      const list = Array.isArray(data.deals) ? data.deals : [];
+      setDeals(list as Deal[]);
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      // do NOT clear last good data
+      setError(e?.message || "Failed to load deals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  // ---- Derived dashboard data (this is what your pies + KPIs need) ----
+  const dealsByStage = useMemo(() => {
+    const buckets: Record<Stage, Deal[]> = {
+      submitted: [],
+      aip: [],
+      instructed: [],
+      granted: [],
+      ntu: [],
+      registrations: [],
+    };
+    for (const d of deals) buckets[asStage(d?.stage)].push(d);
+    return buckets;
+  }, [deals]);
+
+  const countsByStage = useMemo(() => {
+    return {
+      submitted: dealsByStage.submitted.length,
+      aip: dealsByStage.aip.length,
+      instructed: dealsByStage.instructed.length,
+      granted: dealsByStage.granted.length,
+      ntu: dealsByStage.ntu.length,
+      registrations: dealsByStage.registrations.length,
+    };
+  }, [dealsByStage]);
+
+  const totalsByStage = useMemo(() => {
+    const sum = (arr: Deal[]) => arr.reduce((t, d) => t + amt(d), 0);
+    return {
+      submitted: sum(dealsByStage.submitted),
+      aip: sum(dealsByStage.aip),
+      instructed: sum(dealsByStage.instructed),
+      granted: sum(dealsByStage.granted),
+      ntu: sum(dealsByStage.ntu),
+      registrations: sum(dealsByStage.registrations),
+    };
+  }, [dealsByStage]);
+
+  const consultantTotals = useMemo(() => groupTotals(deals, (d) => d.consultant), [deals]);
+  const agentTotals = useMemo(() => groupTotals(deals, (d) => d.agent_name), [deals]);
+  const attorneyTotals = useMemo(() => groupTotals(deals, (d) => d.attorney), [deals]);
+
+  const consultantPie = useMemo(() => consultantTotals.map((x) => ({ name: x.name, value: x.total })), [consultantTotals]);
+  const agentPie = useMemo(() => agentTotals.map((x) => ({ name: x.name, value: x.total })), [agentTotals]);
+  const attorneyPie = useMemo(() => attorneyTotals.map((x) => ({ name: x.name, value: x.total })), [attorneyTotals]);
+
+  // A few common aliases (so we don't have to touch dashboard components)
+  const stageCounts = countsByStage;
+  const stageTotals = totalsByStage;
+
+  return {
+    deals,
+    loading,
+    error,
+    refreshAll,
+
+    // stage breakdowns
+    dealsByStage,
+    byStage: dealsByStage,
+    countsByStage,
+    totalsByStage,
+    stageCounts,
+    stageTotals,
+
+    // KPI aliases (super common in dashboards)
+    submittedCount: countsByStage.submitted,
+    aipCount: countsByStage.aip,
+    instructedCount: countsByStage.instructed,
+    grantedCount: countsByStage.granted,
+    ntuCount: countsByStage.ntu,
+    registrationsCount: countsByStage.registrations,
+
+    submittedTotal: totalsByStage.submitted,
+    aipTotal: totalsByStage.aip,
+    instructedTotal: totalsByStage.instructed,
+    grantedTotal: totalsByStage.granted,
+    ntuTotal: totalsByStage.ntu,
+    registrationsTotal: totalsByStage.registrations,
+
+    // totals/leaderboards
+    consultantTotals,
+    consultants: consultantTotals,
+    agentTotals,
+    agents: agentTotals,
+    attorneyTotals,
+    attorneys: attorneyTotals,
+
+    // pie-ready
+    consultantPie,
+    agentPie,
+    attorneyPie,
+    consultantPieData: consultantPie,
+    agentPieData: agentPie,
+    attorneyPieData: attorneyPie,
+  };
+}

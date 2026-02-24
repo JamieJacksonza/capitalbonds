@@ -1,0 +1,183 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useDeals } from "./useDeals";
+import BankStatusModal from "./BankStatusModal";
+
+function money(n: any) {
+  const v = Number(n || 0);
+  return `R ${v.toLocaleString("en-ZA")}`;
+}
+
+function pickDealDeckId(d: any) {
+  return (
+    d?.deal_deck_id ??
+    d?.dealDeckId ??
+    d?.deck_id ??
+    d?.deal_deck ??
+    d?.dealDeckID ??
+    ""
+  );
+}
+
+function pickApplicant(d: any) {
+  return (
+    d?.client_name ??
+    d?.clientName ??
+    d?.applicant ??
+    d?.applicant_name ??
+    d?.applicantName ??
+    d?.borrower ??
+    d?.borrower_name ??
+    d?.borrowerName ??
+    "-"
+  );
+}
+
+function pickConsultant(d: any) {
+  return d?.consultant ?? d?.consultant_name ?? d?.consultantName ?? "-";
+}
+
+function pickAgent(d: any) {
+  return d?.agent_name ?? d?.agentName ?? d?.agent ?? d?.agent_full_name ?? "-";
+}
+
+function extractDealKey(d: any) {
+  // Prefer UUID id, else deal_code
+  return String(d?.id ?? d?.deal_code ?? d?.dealCode ?? "").trim();
+}
+
+export default function BankStatusTable() {
+  const { deals, loading, error, refreshAll } = useDeals();
+
+  const [open, setOpen] = useState(false);
+  const [activeDeal, setActiveDeal] = useState<any>(null);
+
+  const list = useMemo(() => {
+    const arr = Array.isArray(deals) ? deals : [];
+    // keep it simple: newest first if you have submitted_date, else created_at, else as-is
+    return [...arr].sort((a: any, b: any) => {
+      const ad = String(a?.submitted_date ?? a?.created_at ?? "");
+      const bd = String(b?.submitted_date ?? b?.created_at ?? "");
+      return bd.localeCompare(ad);
+    });
+  }, [deals]);
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Stage</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">Bank Status</div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            {list.length} deal{list.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        <button
+          onClick={() => refreshAll()}
+          className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+        >
+          Refresh
+        </button>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left">
+            <thead className="border-b border-black/10 bg-white">
+              <tr className="text-xs font-extrabold text-black/70">
+                <th className="px-4 py-3">Deal deck ID</th>
+                <th className="px-4 py-3">Applicant</th>
+                <th className="px-4 py-3">Loan amount</th>
+                <th className="px-4 py-3">Consultant</th>
+                <th className="px-4 py-3">Agent</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-black/10">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-sm font-semibold text-black/60">
+                    Loading
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-sm font-semibold text-red-600">
+                    {error}
+                  </td>
+                </tr>
+              ) : list.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-sm font-semibold text-black/60">
+                    No deals found.
+                  </td>
+                </tr>
+              ) : (
+                list.map((d: any) => {
+                  const key = extractDealKey(d);
+                  return (
+                    <tr key={key || Math.random()} className="hover:bg-black/[0.02]">
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">
+                        {pickDealDeckId(d) || "-"}
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">
+                        {pickApplicant(d)}
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">
+                        {money(d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0)}
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">
+                        {pickConsultant(d)}
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">
+                        {pickAgent(d)}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={`/deal/${encodeURIComponent(String(d?.id ?? ""))}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+
+                          <button
+                            onClick={() => {
+                              setActiveDeal(d);
+                              setOpen(true);
+                            }}
+                            className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+                          >
+                            Update
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeDeal ? (
+        <BankStatusModal
+          open={open}
+          onClose={() => setOpen(false)}
+          deal={activeDeal}
+          onSaved={() => refreshAll()}
+        />
+      ) : null}
+    </div>
+  );
+}

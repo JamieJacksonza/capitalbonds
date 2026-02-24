@@ -1,0 +1,44 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const q = (url.searchParams.get("q") || "").trim();
+
+    let query = supabaseAdmin
+      .from("deal_activity")
+      .select("*")
+      .order("moved_at", { ascending: false });
+
+    if (q) {
+      const safe = q.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      query = query.or(
+        `deal_code.ilike.%${safe}%,moved_by.ilike.%${safe}%,actor.ilike.%${safe}%,note.ilike.%${safe}%`
+      );
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("ACTIVITY_GET_SUPABASE_ERROR:", error);
+      return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+    }
+
+    const activity = (data || []).map((row: any) => ({
+      ...row,
+      action: row.action ?? `moved ${row.from_stage ?? ""} -> ${row.to_stage ?? ""}`.trim(),
+      created_at: row.created_at ?? row.moved_at ?? null,
+    }));
+
+    return new Response(JSON.stringify({ ok: true, activity }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("ACTIVITY_GET_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}

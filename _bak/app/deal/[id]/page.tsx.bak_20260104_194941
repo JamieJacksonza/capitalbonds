@@ -1,0 +1,289 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import DealMovePanel from "../../_components/DealMovePanel";
+
+function money(n: any) {
+  const num = Number(n || 0);
+  return `R ${Number.isFinite(num) ? num.toLocaleString("en-ZA") : "0"}`;
+}
+
+function stageLabel(s0: any) {
+  const s = String(s0 || "").toLowerCase();
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  if (s === "ntu") return "NTU";
+  return s0 ? String(s0) : "";
+}
+
+function toDateSafe(v: any) {
+  if (!v) return "";
+  try {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return String(v);
+    return d.toISOString().slice(0, 10);
+  } catch {
+    return String(v);
+  }
+}
+
+function normalizeKey(v: any) {
+  return String(v ?? "").trim();
+}
+
+function matchDeal(d: any, key: string) {
+  if (!d || !key) return false;
+  const k = key.toLowerCase();
+
+  const id = String(d.id ?? d.deal_id ?? d.dealId ?? "").trim().toLowerCase();
+  const code = String(d.deal_code ?? d.dealCode ?? d.code ?? "").trim().toLowerCase();
+
+  return (id && id === k) || (code && code === k);
+}
+
+function Field({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-extrabold uppercase tracking-wide text-black/50">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-black">{value ?? ""}</div>
+    </div>
+  );
+}
+
+function Card({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+      <div className="mb-4">
+        <div className="text-sm font-extrabold text-black">{title}</div>
+        {subtitle ? <div className="mt-1 text-xs font-semibold text-black/60">{subtitle}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export default function DealPage() {
+  const params = useParams() as any;
+  const sp = useSearchParams();
+
+  const key = useMemo(() => {
+    const p = normalizeKey(params?.id);
+    const q = normalizeKey(sp?.get("code"));
+    return p || q;
+  }, [params, sp]);
+
+  const [deal, setDeal] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setLoading(true);
+      setErr(null);
+
+      try {
+        const res = await fetch("/api/deals", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+
+        const list =
+          (Array.isArray(json?.deals) ? json.deals :
+          Array.isArray(json?.data) ? json.data :
+          Array.isArray(json) ? json :
+          []) as any[];
+
+        const found = list.find((d) => matchDeal(d, key));
+        if (!found) throw new Error(`Deal not found for: ${key}`);
+
+        if (alive) setDeal(found);
+      } catch (e: any) {
+        if (alive) setErr(e?.message || "Failed to load deal");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    if (key) run();
+    else {
+      setLoading(false);
+      setErr("No deal id/code found in the URL.");
+    }
+
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+
+  const banks = Array.isArray(deal?.banks) ? deal.banks : [];
+  const bankNames = banks.map((b: any) => b?.bank_name).filter(Boolean).join(", ");
+  const bankText = bankNames || deal?.bank || "";
+
+  const amount = deal?.amount_zar ?? deal?.amountZar ?? deal?.amount ?? 0;
+
+  const regAttorney = deal?.registration_attorney ?? deal?.registrationAttorney ?? "";
+  const regTel = deal?.registration_attorney_tel ?? deal?.registrationAttorneyTel ?? "";
+  const regNo = deal?.registration_number ?? deal?.registrationNumber ?? "";
+  const commPaid = deal?.agent_comm_paid;
+  const dueDate = deal?.payment_due_date;
+
+  const showRegistration =
+    String(deal?.stage || "").toLowerCase() === "registrations" ||
+    regAttorney !== "" ||
+    regTel !== "" ||
+    regContact !== "" ||
+    regNo !== "" ||
+    dueDate;
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-5 px-6 py-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs font-extrabold text-black/50">Deal</div>
+
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            <div className="truncate text-2xl font-extrabold tracking-tight text-black">
+              {loading ? "Loading" : err ? "Not found" : (deal?.deal_code || deal?.id)}
+            </div>
+
+            {!loading && !err ? (
+              <div className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs font-extrabold text-black">
+                {stageLabel(deal?.stage)}
+              </div>
+            ) : null}
+          </div>
+
+          {!loading && !err ? (
+            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-xs font-semibold text-black/60">
+              <div>
+                ID: <span className="font-extrabold text-black/70">{deal?.id || ""}</span>
+              </div>
+              <div>
+                Submitted: <span className="font-extrabold text-black/70">{toDateSafe(deal?.submitted_date)}</span>
+              </div>
+              <div>
+                Updated: <span className="font-extrabold text-black/70">{toDateSafe(deal?.updated_at)}</span>
+              </div>
+              <div>
+                Moved By: <span className="font-extrabold text-black/70">{deal?.last_moved_by || ""}</span>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Link
+            href="/"
+            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-sm font-extrabold text-black hover:border-black/20"
+          >
+             Back
+          </Link>
+        </div>
+      </div>
+
+      {/* Move panel */}
+      <DealMovePanel />
+
+      {/* Body */}
+      {loading ? (
+        <div className="rounded-2xl border border-black/10 bg-white p-6 text-sm font-semibold text-black/60 shadow-sm">
+          Loading deal from Supabase
+        </div>
+      ) : err ? (
+        <div className="rounded-2xl border border-red-200 bg-white p-6 text-sm font-semibold text-red-600 shadow-sm">
+          {err}
+        </div>
+      ) : (
+        <div className="grid gap-5">
+          {/* Summary Cards */}
+          <div className="grid gap-5 md:grid-cols-2">
+            <Card title="Client & Team" subtitle="The people attached to this deal">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Applicant" value={deal?.applicant || ""} />
+                <Field label="Applicant Email" value={deal?.applicant_email || ""} />
+                <Field label="Applicant Cell" value={deal?.applicant_cell || ""} />
+                <Field label="Consultant" value={deal?.consultant || ""} />
+                <Field label="Agent" value={deal?.agent_name || ""} />
+                <Field label="Attorney (General)" value={deal?.attorney || ""} />
+              </div>
+            </Card>
+
+            <Card title="Loan & Bank" subtitle="Core finance details">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Loan Amount" value={money(amount)} />
+                <Field label="Bank(s)" value={bankText} />
+                <Field label="Property Address" value={deal?.property_address || ""} />
+                <Field label="Deal Code" value={deal?.deal_code || ""} />
+              </div>
+
+              {banks.length ? (
+                <div className="mt-4 rounded-2xl border border-black/10 bg-white p-4">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wide text-black/50">
+                    Banks list ({banks.length})
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {banks.map((b: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between gap-3 text-sm">
+                        <div className="font-semibold text-black">{b?.bank_name || ""}</div>
+                        <div className="text-xs font-bold text-black/50">{b?.status || ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </Card>
+          </div>
+
+          {/* Registration */}
+          {showRegistration ? (
+            <Card title="Registration" subtitle="Only relevant when the deal is in Registrations (or when these fields are filled)">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <Field label="Registration No." value={regNo} />
+                <Field label="Attorney Instructed" value={regAttorney} />
+                <Field label="Attorney Tel No" value={regTel} />
+                <Field
+                  label="Agent Comm Paid"
+                  value={commPaid === true ? "YES" : commPaid === false ? "NO" : ""}
+                />
+                <Field label="Payment Due Date" value={dueDate ? toDateSafe(dueDate) : ""} />
+              </div>
+            </Card>
+          ) : null}
+
+          {/* Notes */}
+          <Card title="Notes" subtitle="General comments on the deal">
+            <div className="whitespace-pre-wrap text-sm font-semibold text-black">
+              {deal?.notes?.trim() ? deal.notes : ""}
+            </div>
+          </Card>
+
+          {/* Debug (collapsed by default) */}
+          <div className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+            <details>
+              <summary className="cursor-pointer select-none text-sm font-extrabold text-black">
+                Debug (raw record)
+              </summary>
+              <pre className="mt-3 whitespace-pre-wrap text-xs font-semibold text-black/70">
+                {JSON.stringify(deal, null, 2)}
+              </pre>
+            </details>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

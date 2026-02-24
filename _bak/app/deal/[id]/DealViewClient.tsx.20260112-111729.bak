@@ -1,0 +1,193 @@
+﻿"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+// keep this if the file exists in your project
+import StatusBankNotesCard from "./StatusBankNotesCard";
+
+type Props = { dealKey: string };
+type Deal = Record<string, any>;
+
+function fmtMoneyZar(v: any) {
+  const n = Number(v);
+  if (!isFinite(n)) return "-";
+  try {
+    return n.toLocaleString("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 });
+  } catch {
+    return "R " + n.toFixed(0);
+  }
+}
+
+function prettyKey(k: string) {
+  return k
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function safeVal(v: any) {
+  if (v === null || v === undefined) return "-";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (typeof v === "number") return String(v);
+  if (typeof v === "string" && v.trim() === "") return "-";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+export default function DealViewClient({ dealKey }: Props) {
+  const router = useRouter();
+  const [deal, setDeal] = useState<Deal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setLoading(true);
+      setErr(null);
+
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || json?.ok === false) throw new Error(json?.error || `Failed to load deal (${res.status})`);
+
+        // Normalize possible API shapes
+        let d: any = json;
+        if (d && d.ok === true && d.deal) d = d.deal;
+        if (d && d.ok === true && d.data) d = d.data;
+        if (d && d.deal) d = d.deal;
+
+        if (alive) setDeal(d ?? null);
+      } catch (e: any) {
+        if (alive) {
+          setDeal(null);
+          setErr(e?.message || "Failed to load deal");
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    if (dealKey) run();
+    return () => {
+      alive = false;
+    };
+  }, [dealKey]);
+
+  const summary = useMemo(() => {
+    const d = deal || {};
+    return [
+      { label: "Deal Code", value: d.deal_code ?? d.code ?? "-" },
+      { label: "Applicant", value: d.applicant ?? "-" },
+      { label: "Bank", value: d.bank ?? (Array.isArray(d.banks) ? d.banks.map((b: any) => b?.bank_name).filter(Boolean).join(", ") : "-") ?? "-" },
+      { label: "Amount", value: d.amount_zar != null ? fmtMoneyZar(d.amount_zar) : (d.amount != null ? fmtMoneyZar(d.amount) : "-") },
+      { label: "Consultant", value: d.consultant ?? "-" },
+      { label: "Agent", value: d.agent_name ?? d.agent ?? "-" },
+      { label: "Attorney", value: d.attorney ?? "-" },
+      { label: "Stage", value: d.stage ?? "-" },
+      { label: "Submitted Date", value: d.submitted_date ?? "-" },
+      { label: "Property Address", value: d.property_address ?? "-" },
+      { label: "Insurance Needed", value: d.insurance_needed ?? "-" },
+      { label: "Registration Ref", value: d.registration_attorney_reference ?? d.registration_reference ?? "-" },
+      { label: "Registration No.", value: d.registration_number ?? "-" },
+      { label: "Payment Due Date", value: d.payment_due_date ?? "-" },
+      { label: "Agent Comm Paid", value: d.agent_comm_paid ?? "-" },
+    ];
+  }, [deal]);
+
+  const moves = useMemo(() => {
+    const d = deal || {};
+    const mh = Array.isArray(d.move_history) ? d.move_history : [];
+    return mh.slice().reverse().slice(0, 12);
+  }, [deal]);
+
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-6">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xl font-extrabold text-black">Deal View</div>
+          <div className="text-sm font-semibold text-black/60">Key: {dealKey}</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black shadow-sm"
+          >
+            Back
+          </button>
+        </div>
+      </div>
+
+      {err ? (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm font-bold text-red-700">
+          {err}
+        </div>
+      ) : null}
+
+      <div className="mt-4 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-extrabold text-black">Deal Summary</div>
+          <div className="text-xs font-extrabold text-black/50">{loading ? "Loading..." : (deal ? "Loaded" : "No deal")}</div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          {summary.map((it) => (
+            <div key={it.label} className="rounded-xl border border-black/10 bg-white p-4">
+              <div className="text-[11px] font-extrabold text-black/45">{it.label}</div>
+              <div className="text-sm font-extrabold text-black">{safeVal(it.value)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        {/* pass both props as any so StatusBankNotesCard can accept whichever it wants */}
+        <StatusBankNotesCard {...({ dealKey, deal } as any)} />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        <div className="text-sm font-extrabold text-black">Recent Moves</div>
+
+        {moves.length ? (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-black/10">
+                  <th className="py-2 pr-3 font-extrabold text-black/60">At</th>
+                  <th className="py-2 pr-3 font-extrabold text-black/60">From</th>
+                  <th className="py-2 pr-3 font-extrabold text-black/60">To</th>
+                  <th className="py-2 pr-3 font-extrabold text-black/60">By</th>
+                  <th className="py-2 pr-3 font-extrabold text-black/60">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moves.map((m: any, idx: number) => (
+                  <tr key={idx} className="border-b border-black/5">
+                    <td className="py-2 pr-3 font-semibold text-black/70">{safeVal(m.at)}</td>
+                    <td className="py-2 pr-3 font-extrabold text-black">{safeVal(m.from)}</td>
+                    <td className="py-2 pr-3 font-extrabold text-black">{safeVal(m.to)}</td>
+                    <td className="py-2 pr-3 font-semibold text-black/70">{safeVal(m.by)}</td>
+                    <td className="py-2 pr-3 font-semibold text-black/70">{safeVal(m.note)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="mt-2 text-sm font-semibold text-black/60">No move history found.</div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+        <div className="text-sm font-extrabold text-black">Raw Deal (debug)</div>
+        <pre className="mt-3 max-h-[360px] overflow-auto rounded-xl border border-black/10 bg-white p-3 text-xs">
+{JSON.stringify(deal, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,244 @@
+﻿"use client";
+
+import React, { useMemo } from "react";
+
+type AnyDeal = Record<string, any>;
+type StageKey = "submitted" | "aip" | "instructed" | "granted" | "registrations" | "ntu";
+
+function moneyZar(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(v);
+}
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normStage(s: any): StageKey | "" {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp" || v === "iap") return "aip";
+  if (v === "grant" || v === "approved") return "granted";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "submitted" || v === "aip" || v === "instructed" || v === "granted" || v === "registrations" || v === "ntu") return v as StageKey;
+  return "" as any;
+}
+
+function dealConsultant(d: AnyDeal) {
+  return (
+    d?.consultant ??
+    d?.consultant_name ??
+    d?.consultantName ??
+    d?.agent ??
+    d?.agent_name ??
+    d?.agentName ??
+    d?.assigned_to ??
+    d?.owner ??
+    d?.created_by ??
+    "Unassigned"
+  );
+}
+
+function dealAmount(d: AnyDeal) {
+  // prefer your normalized value (useDeals.tsx sets amount_zar)
+  const raw =
+    d?.amount_zar ??
+    d?.amountZar ??
+    d?.amount ??
+    d?.value ??
+    d?.deal_value ??
+    d?.deal_amount ??
+    d?.loan_amount ??
+    d?.bond_amount ??
+    d?.purchase_price ??
+    0;
+
+  return toNumber(raw);
+}
+
+// Weighted pipeline scoring (tweak anytime)
+const STAGE_WEIGHTS: Record<StageKey, number> = {
+  submitted: 0.20,
+  aip: 0.45,
+  instructed: 0.65,
+  granted: 0.85,
+  registrations: 1.00,
+  ntu: 0.05,
+};
+
+function stageLabel(s: StageKey) {
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  if (s === "ntu") return "NTU";
+  return s;
+}
+
+export default function ConsultantPipelineSummary({
+  deals,
+  title,
+}: {
+  deals: AnyDeal[];
+  title?: string;
+}) {
+  const model = useMemo(() => {
+    const list = Array.isArray(deals) ? deals : [];
+
+    const map = new Map<
+      string,
+      {
+        name: string;
+        deals: number;
+        total: number;
+        weighted: number;
+        byStage: Record<StageKey, { deals: number; total: number }>;
+      }
+    >();
+
+    const stages: StageKey[] = ["submitted", "aip", "instructed", "granted", "registrations", "ntu"];
+
+    for (const d of list) {
+      const name = String(dealConsultant(d) ?? "Unassigned").trim() || "Unassigned";
+      const stage = normStage(d?.stage) as StageKey;
+      const amt = dealAmount(d);
+
+      const cur =
+        map.get(name) ||
+        {
+          name,
+          deals: 0,
+          total: 0,
+          weighted: 0,
+          byStage: {
+            submitted: { deals: 0, total: 0 },
+            aip: { deals: 0, total: 0 },
+            instructed: { deals: 0, total: 0 },
+            granted: { deals: 0, total: 0 },
+            registrations: { deals: 0, total: 0 },
+            ntu: { deals: 0, total: 0 },
+          },
+        };
+
+      cur.deals += 1;
+      cur.total += amt;
+
+      if (stage && cur.byStage[stage]) {
+        cur.byStage[stage].deals += 1;
+        cur.byStage[stage].total += amt;
+        cur.weighted += amt * (STAGE_WEIGHTS[stage] ?? 0);
+      } else {
+        // unknown stage: treat like submitted-ish
+        cur.weighted += amt * 0.2;
+      }
+
+      map.set(name, cur);
+    }
+
+    const rows = Array.from(map.values()).sort((a, b) => (b.weighted - a.weighted) || (b.total - a.total) || (b.deals - a.deals) || a.name.localeCompare(b.name));
+
+    const grandDeals = rows.reduce((s, r) => s + r.deals, 0);
+    const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+    const grandWeighted = rows.reduce((s, r) => s + r.weighted, 0);
+
+    function topStageFor(r: typeof rows[number]) {
+      const entries = Object.entries(r.byStage) as [StageKey, { deals: number; total: number }][];
+      entries.sort((a, b) => b[1].total - a[1].total);
+      return entries[0]?.[0] || "submitted";
+    }
+
+    const top = rows[0] || null;
+    const second = rows[1] || null;
+
+    const summary = (() => {
+      if (!top) return "No consultant pipeline data yet.";
+      const topStage = topStageFor(top);
+      const lead = second ? Math.max(0, top.weighted - second.weighted) : top.weighted;
+
+      const parts: string[] = [];
+      parts.push(`${top.name} is currently leading the pipeline.`);
+      parts.push(`Weighted pipeline: ${moneyZar(top.weighted)} across ${top.deals} deal(s).`);
+      parts.push(`Most value sits in ${stageLabel(topStage)}.`);
+
+      if (second) {
+        parts.push(`${second.name} is next at ${moneyZar(second.weighted)}  gap to #1 is ${moneyZar(lead)}.`);
+      }
+
+      return parts.join(" ");
+    })();
+
+    return { rows, grandDeals, grandTotal, grandWeighted, summary, stages };
+  }, [deals]);
+
+  return (
+    <div className="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <div className="text-base font-extrabold text-black">{title || "Consultant pipeline ranking (All Stages)"}</div>
+          <div className="mt-1 text-[11px] font-semibold text-black/60">
+            AI-style summary based on weighted pipeline value (later stages count more).
+          </div>
+        </div>
+        <div className="text-[11px] font-extrabold text-black/55">
+          {model.grandDeals} deal(s) Total{" "}
+          <span className="text-black">{moneyZar(model.grandTotal)}</span>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-3 text-[12px] font-semibold text-black/75">
+        {model.summary}
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
+        <div className="grid grid-cols-12 bg-black/[0.02] px-3 py-2 text-[10px] font-extrabold text-black/60">
+          <div className="col-span-1">#</div>
+          <div className="col-span-4">Consultant</div>
+          <div className="col-span-2 text-right">Deals</div>
+          <div className="col-span-3 text-right">Total</div>
+          <div className="col-span-2 text-right">Pipeline score</div>
+        </div>
+
+        {model.rows.length === 0 ? (
+          <div className="px-3 py-3 text-xs font-semibold text-black/40">No deals available.</div>
+        ) : (
+          model.rows.map((r, idx) => (
+            <div key={r.name} className="grid grid-cols-12 items-center px-3 py-2 text-[11px] font-semibold text-black border-t border-black/10">
+              <div className="col-span-1 font-extrabold text-black/60">{idx + 1}</div>
+              <div className="col-span-4 min-w-0 truncate font-extrabold">{r.name}</div>
+              <div className="col-span-2 text-right font-extrabold">{r.deals}</div>
+              <div className="col-span-3 text-right font-extrabold">{moneyZar(r.total)}</div>
+              <div className="col-span-2 text-right font-extrabold">{moneyZar(r.weighted)}</div>
+
+              <div className="col-span-12 mt-1 flex flex-wrap gap-2 pb-1">
+                {(["submitted","aip","instructed","granted","registrations","ntu"] as const).map((s) => {
+                  const x = r.byStage[s];
+                  if (!x || (x.deals === 0 && x.total === 0)) return null;
+                  return (
+                    <span
+                      key={s}
+                      className="rounded-full border border-black/10 bg-white px-2 py-0.5 text-[10px] font-semibold text-black/70"
+                      title={`${stageLabel(s)}: ${x.deals} deal(s), ${moneyZar(x.total)}`}
+                    >
+                      {stageLabel(s)}: {x.deals}  {moneyZar(x.total)}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="mt-2 text-[10px] font-semibold text-black/35">
+        Pipeline score = sum(deal value  stage weight). Weights: Submitted 0.20, AIP 0.45, Instructed 0.65, Granted 0.85, Registrations 1.00, NTU 0.05.
+      </div>
+    </div>
+  );
+}

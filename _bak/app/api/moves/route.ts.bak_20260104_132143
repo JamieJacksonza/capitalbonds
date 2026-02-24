@@ -1,0 +1,85 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type DealStage = (typeof ALLOWED)[number];
+
+function normalizeStage(v: any): DealStage {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "iap") return "aip";
+  if (s === "registration") return "registrations";
+  if (ALLOWED.includes(s as DealStage)) return s as DealStage;
+  return "submitted";
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+async function doMove(body: any) {
+  const key = String(body?.id ?? body?.dealId ?? body?.deal_id ?? body?.deal_code ?? body?.dealCode ?? "").trim();
+  const toStage = normalizeStage(body?.toStage ?? body?.stage ?? body?.nextStage);
+  const movedBy = String(body?.movedBy ?? body?.moved_by ?? body?.consultant ?? body?.user ?? "system").trim() || "system";
+  const note = body?.note ?? null;
+
+  if (!key) return { status: 400, payload: { ok: false, error: "Missing id or deal_code" } };
+
+  // Load before
+  let beforeQ = supabaseAdmin.from("deals").select("id, deal_code, stage");
+  beforeQ = isUuid(key) ? beforeQ.eq("id", key) : beforeQ.eq("deal_code", key);
+  const { data: before, error: getErr } = await beforeQ.maybeSingle();
+
+  if (getErr) return { status: 500, payload: { ok: false, error: getErr.message } };
+  if (!before) return { status: 404, payload: { ok: false, error: "Deal not found" } };
+
+  // Update
+  let updQ = supabaseAdmin.from("deals").update({ stage: toStage }).select("*");
+  updQ = isUuid(key) ? updQ.eq("id", key) : updQ.eq("deal_code", key);
+  const { data: updated, error: updErr } = await updQ.maybeSingle();
+
+  if (updErr) return { status: 500, payload: { ok: false, error: updErr.message } };
+  if (!updated) return { status: 500, payload: { ok: false, error: "Update failed" } };
+
+  // Activity
+  const nowIso = new Date().toISOString();
+  const { error: actErr } = await supabaseAdmin
+    .from("deal_activity")
+    .insert({
+      deal_id: updated.id,
+      deal_code: updated.deal_code,
+      from_stage: before.stage,
+      to_stage: toStage,
+      moved_by: movedBy,
+      moved_at: nowIso,
+      actor: movedBy,
+      created_at: nowIso,
+      note,
+    });
+
+  if (actErr) console.error("ACTIVITY_INSERT_ERROR:", actErr);
+
+  return { status: 200, payload: { ok: true, deal: updated } };
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const result = await doMove(body);
+    return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  } catch (e: any) {
+    console.error("MOVES_POST_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  // some code might PATCH /api/moves
+  return POST(req);
+}
+
+export async function GET() {
+  // prevent any accidental GET causing scary failures
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+}

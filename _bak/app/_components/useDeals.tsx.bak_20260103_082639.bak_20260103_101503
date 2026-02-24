@@ -1,0 +1,283 @@
+﻿"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+export type Stage = "submitted" | "aip" | "instructed" | "granted" | "ntu";
+
+export type DealBank = {
+  id: string;
+  deal_id: string;
+  bank_name: string;
+  amount_zar?: number | string | null;
+
+  // per-bank notes + attorney fields
+  bank_notes?: string | null;
+  attorney?: string | null;
+  attorney_note?: string | null;
+
+  // optional per-bank metadata
+  reference_number?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type Deal = {
+  id: string;
+
+  // FIX: StageBoard expects this
+  deal_code?: string;
+
+  applicant: string;
+  bank?: string;
+  consultant?: string | null;
+  agent_name?: string | null;
+
+  applicant_email?: string | null;
+  applicant_cell?: string | null;
+
+  // backend sometimes gives amount_zar, UI uses amount
+  amount_zar?: number | null;
+  amount: number;
+
+  stage: Stage;
+  notes?: string | null;
+
+  submitted_date?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  banks?: DealBank[];
+};
+
+export type DealMove = {
+  id: string;
+  deal_id?: string;
+  dealId?: string;
+
+  from_stage?: string;
+  to_stage?: string;
+
+  moved_by?: string | null;
+  moved_at?: string | null;
+
+  note?: string | null;
+  created_at?: string | null;
+};
+
+function normStage(v: any): Stage {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "submitted" || s === "aip" || s === "instructed" || s === "granted" || s === "ntu") return s;
+  return "submitted";
+}
+
+function toNumber(v: any): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const n = Number(String(v ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function getLoggedInNameSafe() {
+  try {
+    return localStorage.getItem("cb_user") || "System";
+  } catch {
+    return "System";
+  }
+}
+
+function normalizeMoves(raw: any[]): DealMove[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m) => ({
+      ...m,
+      id: String(m?.id || ""),
+      deal_id: m?.deal_id ?? m?.dealId ?? m?.dealID ?? null,
+      from_stage: String(m?.from_stage ?? m?.fromStage ?? ""),
+      to_stage: String(m?.to_stage ?? m?.toStage ?? ""),
+      moved_by: m?.moved_by ?? m?.movedBy ?? null,
+      moved_at: m?.moved_at ?? m?.movedAt ?? null,
+      note: m?.note ?? null,
+      created_at: m?.created_at ?? null,
+    }))
+    .filter((m) => !!m.id);
+}
+
+export function useDeals() {
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [moves, setMoves] = useState<DealMove[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshAll = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const [dRes, mRes] = await Promise.all([
+        fetch("/api/deals", { cache: "no-store" }),
+        fetch("/api/moves", { cache: "no-store" }).catch(() => null as any),
+      ]);
+
+      const dJson = await dRes.json().catch(() => ({}));
+      if (!dRes.ok || !dJson?.ok) {
+        throw new Error(dJson?.error || `Failed to load deals (${dRes.status})`);
+      }
+
+      const list: Deal[] = (dJson.deals || []).map((d: any) => {
+        const amount = toNumber(d?.amount_zar ?? d?.amount ?? 0);
+        return {
+          ...d,
+          id: String(d?.id || ""),
+          deal_code: d?.deal_code ?? d?.dealCode ?? undefined,
+          applicant: String(d?.applicant || ""),
+          stage: normStage(d?.stage),
+          amount_zar: d?.amount_zar ?? d?.amountZar ?? null,
+          amount,
+          banks: Array.isArray(d?.banks) ? d.banks : [],
+        } as Deal;
+      });
+
+      setDeals(list);
+
+      if (mRes && (mRes as any)?.ok !== false) {
+        const mJson = await (mRes as Response).json().catch(() => ({}));
+        const rawMoves = Array.isArray(mJson?.moves) ? mJson.moves : Array.isArray(mJson) ? mJson : [];
+        setMoves(normalizeMoves(rawMoves));
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to load deals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // alias for older components that call refresh()
+  const refresh = refreshAll;
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  const byStage = useCallback(
+    (stage: Stage) => {
+      const s = normStage(stage);
+      return (deals || []).filter((d) => normStage(d.stage) === s);
+    },
+    [deals]
+  );
+
+  const stageCounts = useMemo(() => {
+    const counts: Record<Stage, number> = { submitted: 0, aip: 0, instructed: 0, granted: 0, ntu: 0 };
+    for (const d of deals || []) counts[normStage(d.stage)] += 1;
+    return counts;
+  }, [deals]);
+
+  const stageTotals = useMemo(() => {
+    const totals: Record<Stage, number> = { submitted: 0, aip: 0, instructed: 0, granted: 0, ntu: 0 };
+    for (const d of deals || []) totals[normStage(d.stage)] += toNumber(d.amount);
+    return totals;
+  }, [deals]);
+
+  const summary = useMemo(() => {
+    return {
+      totalDeals: (deals || []).length,
+      totalAmount: (deals || []).reduce((s, d) => s + toNumber(d.amount), 0),
+    };
+  }, [deals]);
+
+  const movesForDeal = useCallback(
+    (dealId: string) => {
+      const id = String(dealId || "").trim();
+      if (!id) return [];
+      const filtered = (moves || []).filter((m) => String(m.deal_id || m.dealId || "").trim() === id);
+
+      // sort newest first (moved_at, else created_at)
+      return filtered.sort((a, b) => {
+        const ta = Date.parse(String(a.moved_at || a.created_at || 0));
+        const tb = Date.parse(String(b.moved_at || b.created_at || 0));
+        return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+      });
+    },
+    [moves]
+  );
+
+  const moveDealToStage = useCallback(
+    async (
+      dealId: string,
+      nextStage: Stage,
+      opts?: {
+        note?: string;
+        movedBy?: string;
+
+        // FIX: allow per-bank updates to be sent with the move
+        bankNotes?: Array<{
+          bankId: string;
+          bank_notes?: string;
+          attorney?: string;
+          attorney_note?: string;
+        }>;
+      }
+    ) => {
+      const id = String(dealId || "").trim();
+      if (!id) throw new Error("Missing deal id");
+
+      const next = normStage(nextStage);
+      const movedBy = String(opts?.movedBy || getLoggedInNameSafe() || "System").trim() || "System";
+      const note = String(opts?.note || "").trim();
+
+      // optimistic stage update
+      setDeals((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, stage: next } : d))
+      );
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // accept any backend key the route understands
+          nextStage: next,
+          toStage: next,
+
+          movedBy,
+
+          note,
+
+          // send bank updates if provided
+          bankNotes: Array.isArray(opts?.bankNotes) ? opts?.bankNotes : [],
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        await refreshAll(); // revert via server truth
+        throw new Error(data?.error || `Failed to move deal (${res.status})`);
+      }
+
+      // server truth refresh (so banks + notes stay correct)
+      await refreshAll();
+      return data;
+    },
+    [refreshAll]
+  );
+
+  return {
+    deals,
+    moves,
+    loading,
+    error,
+    refresh,
+    refreshAll,
+    byStage,
+    stageCounts,
+    stageTotals,
+    summary,
+    movesForDeal,
+    moveDealToStage,
+  };
+}
+
+export default useDeals;

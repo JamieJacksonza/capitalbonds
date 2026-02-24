@@ -1,0 +1,152 @@
+"use client";
+
+import { useMemo } from "react";
+import { useDeals } from "./useDeals";
+
+type Slice = { label: string; value: number };
+
+function money(n: number) {
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(n || 0));
+}
+
+function clamp(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return n < 0 ? 0 : n;
+}
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const PALETTE = [
+  "#111827", "#2563eb", "#16a34a", "#f97316", "#a855f7", "#db2777",
+  "#0ea5e9", "#84cc16", "#f59e0b", "#ef4444", "#14b8a6", "#64748b",
+];
+
+function buildPieStyle(items: Slice[]) {
+  const total = items.reduce((s, x) => s + clamp(x.value), 0);
+  if (total <= 0) return { background: "conic-gradient(#e5e7eb 0 360deg)" };
+
+  let acc = 0;
+  const parts: string[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const v = clamp(items[i].value);
+    const frac = v / total;
+    const start = acc * 360;
+    const end = (acc + frac) * 360;
+    const color = PALETTE[i % PALETTE.length];
+    parts.push(`${color} ${start}deg ${end}deg`);
+    acc += frac;
+  }
+
+  return { background: `conic-gradient(${parts.join(", ")})` };
+}
+
+function PieCard(props: { title: string; subtitle: string; items: Slice[] }) {
+  const total = props.items.reduce((s, x) => s + clamp(x.value), 0);
+  const top = props.items.slice(0, 10);
+  const style = buildPieStyle(top);
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+      <div className="text-xs font-extrabold text-black">{props.title}</div>
+      <div className="mt-1 text-sm font-semibold text-black/70">{props.subtitle}</div>
+
+      <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
+        <div className="relative h-56 w-56 shrink-0">
+          <div className="h-56 w-56 rounded-full border border-black/10" style={style as any} />
+          <div className="absolute inset-0 m-auto h-28 w-28 rounded-full border border-black/10 bg-white shadow-sm" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center">
+              <div className="text-xs font-extrabold text-black/60">TOTAL</div>
+              <div className="text-lg font-extrabold text-black">{money(total)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-2">
+          {top.length === 0 ? (
+            <div className="text-sm font-semibold text-black/70">No data yet.</div>
+          ) : (
+            top.map((x, i) => {
+              const pct = total > 0 ? (clamp(x.value) / total) * 100 : 0;
+              return (
+                <div key={x.label + i} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="h-3 w-3 rounded-full border border-black/10"
+                      style={{ backgroundColor: PALETTE[i % PALETTE.length] }}
+                    />
+                    <div className="truncate text-sm font-extrabold text-black">{x.label}</div>
+                  </div>
+                  <div className="text-sm font-extrabold text-black whitespace-nowrap">
+                    {money(x.value)}{" "}
+                    <span className="text-xs font-bold text-black/50">({pct.toFixed(0)}%)</span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {props.items.length > 10 ? (
+            <div className="pt-2 text-xs font-bold text-black/50">
+              Showing top 10. (Because nobody wants a pie chart that looks like confetti.)
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AgentAttorneyPies() {
+  const { deals } = useDeals();
+
+  const agentTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of deals as any[]) {
+      const agent = String(d?.agent_name || d?.agentName || "").trim() || "Unassigned";
+      const amt = toNumber(d?.amount_zar ?? d?.amount ?? 0);
+      map.set(agent, (map.get(agent) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [deals]);
+
+  const attorneyTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of deals as any[]) {
+      const banks = Array.isArray(d?.banks) ? d.banks : [];
+      for (const b of banks) {
+        const firm = String(b?.attorney || "").trim() || "Unassigned";
+        const amt = toNumber(b?.amount_zar ?? 0);
+        map.set(firm, (map.get(firm) || 0) + amt);
+      }
+    }
+    return Array.from(map.entries())
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [deals]);
+
+  return (
+    <section className="grid gap-4 lg:grid-cols-2">
+      <PieCard
+        title="Agents contribution"
+        subtitle="Total deal value grouped by agent name."
+        items={agentTotals}
+      />
+      <PieCard
+        title="Attorney firms contribution"
+        subtitle="Total bank amounts grouped by attorney/firm."
+        items={attorneyTotals}
+      />
+    </section>
+  );
+}

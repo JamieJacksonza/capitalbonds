@@ -1,0 +1,123 @@
+"use client";
+
+function pick(obj: any, keys: string[], fallback: any = "") {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+  }
+  return fallback;
+}
+
+function fmt(v: any) {
+  const s = String(v ?? "").trim();
+  return s ? s : "-";
+}
+
+export default function InstructedSummary({ deal }: { deal: any }) {
+  // REAL keys seen in your screenshot + fallbacks for future-proofing
+  const firmOrName = pick(deal, [
+    "registration_attorney",
+    "instructed_attorney",
+    "attorney_firm",
+    "attorneyFirm",
+    "attorney_name",
+    "attorneyName",
+  ]);
+
+  const contact = pick(deal, [
+    "instructed_attorney_contact",
+    "attorney_contact",
+    "attorneyContact",
+  ]);
+
+  const tel = pick(deal, [
+    "registration_attorney_tel",
+    "instructed_attorney_tel",
+    "attorney_tel",
+    "attorneyTel",
+    "attorney_phone",
+    "attorneyPhone",
+  ]);
+
+  const email = pick(deal, [
+    "registration_attorney_email",
+    "instructed_attorney_email",
+    "attorney_email",
+    "attorneyEmail",
+  ]);
+
+  const reference = pick(deal, [
+    "registration_attorney_reference",
+    "registration_attorney_ref",
+    "instructed_attorney_reference",
+    "attorney_reference",
+    "attorneyReference",
+  ]);
+
+  const note = pick(deal, [
+    "instructed_attorney_notes",
+    "registration_attorney_notes",
+    "attorney_notes",
+    "attorneyNotes",
+    "instructed_notes",
+    "instructed_note",
+  ]);
+
+  const hasAnything = [firmOrName, contact, tel, email, reference, note].some(
+    (x) => String(x ?? "").trim() !== ""
+  );
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div>
+        <div className="text-sm font-extrabold text-black">Instructed summary</div>
+        <div className="text-xs font-semibold text-black/60">Attorney details only</div>
+      </div>
+
+      {!hasAnything ? (
+        <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-sm font-semibold text-black/60">
+          No attorney details captured for this deal yet.
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+          <div className="text-xs font-extrabold text-black/70">Attorney details</div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Firm / Attorney</div>
+              <div className="text-sm font-semibold text-black">{fmt(firmOrName)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Telephone</div>
+              <div className="text-sm font-semibold text-black">{fmt(tel)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Email</div>
+              <div className="text-sm font-semibold text-black">{fmt(email)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3 sm:col-span-2">
+              <div className="text-[11px] font-extrabold text-black/50">Reference</div>
+              <div className="text-sm font-semibold text-black">{fmt(reference)}</div>
+            </div>
+
+            {String(note ?? "").trim() !== "" && (
+              <div className="rounded-2xl border border-black/10 bg-white p-3 sm:col-span-2">
+                <div className="text-[11px] font-extrabold text-black/50">Notes</div>
+                <div className="text-sm font-semibold text-black whitespace-pre-wrap">
+                  {String(note)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

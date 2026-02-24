@@ -1,0 +1,118 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useDeals } from "./useDeals";
+import BankStatusModal from "./BankStatusModal";
+
+function toAmount(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+function money(n: number) {
+  return `R ${Number(n || 0).toLocaleString("en-ZA")}`;
+}
+function pickDealDeckId(d: any) {
+  return (
+    d?.deal_deck_id ??
+    d?.dealDeckId ??
+    d?.deck_id ??
+    d?.deal_deck ??
+    d?.dealDeckID ??
+    ""
+  );
+}
+
+export default function BankStatusTable() {
+  const { deals, refreshAll } = useDeals();
+  const [open, setOpen] = useState(false);
+  const [activeDeal, setActiveDeal] = useState<any>(null);
+
+  const list = useMemo(() => {
+    return (deals || []).map((d: any) => ({ ...d, amount: toAmount(d) }));
+  }, [deals]);
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Stage</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">Bank Status</div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            {list.length} deal{list.length === 1 ? "" : "s"}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left">
+            <thead className="border-b border-black/10 bg-white">
+              <tr className="text-xs font-extrabold text-black/70">
+                <th className="px-4 py-3">Deal deck ID</th>
+                <th className="px-4 py-3">Applicant</th>
+                <th className="px-4 py-3">Loan amount</th>
+                <th className="px-4 py-3">Consultant</th>
+                <th className="px-4 py-3">Agent</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-black/10">
+              {list.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm font-semibold text-black/60">
+                    No deals found.
+                  </td>
+                </tr>
+              ) : (
+                list.map((d: any) => {
+                  const deckId = pickDealDeckId(d) || "-";
+                  return (
+                    <tr key={d?.id ?? d?.deal_code ?? deckId} className="align-top">
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{deckId}</td>
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">
+                        {d?.applicant_name ?? d?.applicant ?? d?.client_name ?? "-"}
+                      </td>
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d?.consultant ?? "-"}</td>
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d?.agent_name ?? d?.agentName ?? "-"}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={`/deal/${encodeURIComponent(d?.id ?? "")}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+
+                          <button
+                            onClick={() => { setActiveDeal(d); setOpen(true); }}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                            type="button"
+                          >
+                            Bank Status
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeDeal ? (
+        <BankStatusModal
+          open={open}
+          onClose={() => setOpen(false)}
+          deal={activeDeal}
+          onSaved={async () => { await refreshAll(); }}
+        />
+      ) : null}
+    </div>
+  );
+}

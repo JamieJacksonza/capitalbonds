@@ -1,0 +1,154 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+function toStr(v: any) {
+  const s = String(v ?? "").trim();
+  return s || "-";
+}
+
+function fmt(v: any) {
+  if (v === null || v === undefined) return "-";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+function getCode(d: any) {
+  return String(d?.deal_code ?? d?.dealCode ?? d?.code ?? "").trim();
+}
+
+export default function DealSbPage({ params }: { params: { code: string } }) {
+  const raw = String(params?.code ?? "").trim();
+  let code = raw;
+  try { code = decodeURIComponent(raw); } catch {}
+
+  const [deal, setDeal] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const needle = String(code ?? "").trim();
+        if (!needle) throw new Error('Missing SB code in URL. Example: /deal-sb/SB-3A310E');
+
+        const res = await fetch("/api/deals", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Failed to load deals (HTTP ${res.status})`);
+
+        const data = await res.json().catch(() => ({}));
+        const list =
+          Array.isArray(data) ? data :
+          Array.isArray(data?.deals) ? data.deals :
+          Array.isArray(data?.rows) ? data.rows :
+          [];
+
+        const n = needle.toLowerCase();
+
+        const found =
+          list.find((d: any) => String(d?.id ?? "").trim().toLowerCase() === n) ||
+          list.find((d: any) => getCode(d).toLowerCase() === n) ||
+          null;
+
+        if (!cancelled) {
+          setDeal(found);
+          setLoading(false);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(String(e?.message || e || "Unknown error"));
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+    return () => { cancelled = true; };
+  }, [code]);
+
+  const rows = useMemo(() => {
+    if (!deal) return [];
+    const entries = Object.entries(deal)
+      .filter(([k]) => k !== "banks") // keep banks separate if it exists
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    const banks = (deal?.banks ?? []) as any[];
+    const banksRow: any[] = [["banks_count", Array.isArray(banks) ? banks.length : 0]];
+
+    return [...banksRow, ...entries];
+  }, [deal]);
+
+  return (
+    <div className="w-full">
+      <div className="mx-auto max-w-6xl px-7 py-10 md:px-12 lg:px-16">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-2xl font-extrabold text-black">Deal Details (SB)</div>
+            <div className="mt-1 text-sm font-semibold text-black/60">
+              Code/ID: {toStr(code)}
+            </div>
+            <div className="mt-1 text-xs font-semibold text-black/40">
+              This page auto-fills from /api/deals and matches by deal_code (SB-xxxxxx) or id.
+            </div>
+          </div>
+
+          <Link
+            href="/submitted"
+            className="rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Back
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-5 text-sm font-semibold text-black/70">
+            Loading deal...
+          </div>
+        ) : error ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-700">
+            {error}
+          </div>
+        ) : !deal ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-5 text-sm font-semibold text-black/70">
+            Deal not found.
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-black/10 bg-white p-8 shadow-sm">
+            <div className="mb-4 text-sm font-extrabold text-black">All Fields</div>
+
+            <div className="overflow-hidden rounded-2xl border border-black/10">
+              <table className="w-full text-left">
+                <tbody>
+                  {rows.map(([k, v]) => (
+                    <tr key={String(k)} className="border-t border-black/10 first:border-t-0">
+                      <td className="w-[260px] px-5 py-3 text-xs font-extrabold text-black/60 align-top">
+                        {String(k)}
+                      </td>
+                      <td className="px-5 py-3 text-sm font-semibold text-black whitespace-pre-wrap">
+                        {fmt(v)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 text-[11px] font-semibold text-black/50">
+              Example: /deal-sb/SB-3A310E
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

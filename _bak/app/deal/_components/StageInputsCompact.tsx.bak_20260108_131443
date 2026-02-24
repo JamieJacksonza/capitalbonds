@@ -1,0 +1,177 @@
+﻿"use client";
+
+type AnyObj = Record<string, any>;
+
+const ORDER = ["submitted", "aip", "instructed", "granted", "registrations", "ntu"] as const;
+
+function stageTitle(s: string) {
+  if (s === "aip") return "AIP";
+  if (s === "ntu") return "NTU";
+  if (s === "registrations") return "Registrations";
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+}
+
+function isEmptyVal(v: any) {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "string" && v.trim() === "") return true;
+  return false;
+}
+
+function prettyKey(k: string) {
+  return k
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function kvRows(obj: AnyObj, keys: string[]) {
+  const rows: Array<{ k: string; v: any }> = [];
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (!isEmptyVal(v) || v === false) rows.push({ k, v });
+  }
+  return rows;
+}
+
+function stagePrefixedRows(deal: AnyObj, stage: string) {
+  const prefix = stage + "_";
+  const rows: Array<{ k: string; v: any }> = [];
+  if (!deal) return rows;
+
+  for (const k of Object.keys(deal)) {
+    if (!k.startsWith(prefix)) continue;
+    const v = deal[k];
+    if (!isEmptyVal(v) || v === false) {
+      rows.push({ k, v });
+    }
+  }
+
+  // stable ordering: alphabetical
+  rows.sort((a, b) => a.k.localeCompare(b.k));
+  return rows;
+}
+
+function Row({ label, value }: { label: string; value: any }) {
+  const v =
+    value === null || value === undefined || value === ""
+      ? ""
+      : typeof value === "boolean"
+      ? value
+        ? "Yes"
+        : "No"
+      : String(value);
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="text-[11px] font-extrabold text-black/55">{label}</div>
+      <div className="text-[12px] font-extrabold text-black text-right whitespace-pre-wrap">{v}</div>
+    </div>
+  );
+}
+
+export default function StageInputsCompact({ deal }: { deal?: AnyObj | null }) {
+  if (!deal) return null;
+
+  const current = String(deal.stage || "").toLowerCase().trim();
+  const currentIdx = ORDER.indexOf(current as any);
+
+  const banks = Array.isArray(deal.deal_banks) ? deal.deal_banks : [];
+  const banksWithAny = banks.filter((b: any) => {
+    const n = String(b?.bank_notes || "").trim();
+    const at = String(b?.attorney || "").trim();
+    const an = String(b?.attorney_note || "").trim();
+    return !!n || !!at || !!an;
+  });
+
+  const regKeys = [
+    "registration_number",
+    "registration_attorney",
+    "registration_attorney_tel",
+    "payment_due_date",
+    "agent_comm_paid",
+  ];
+
+  return (
+    <div className="mt-3">
+      <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="text-[13px] font-extrabold text-black">Stage inputs</div>
+          <div className="text-[11px] font-semibold text-black/45">
+            Current: {stageTitle(current) || ""}
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          {ORDER.map((s, idx) => {
+            const prefRows = stagePrefixedRows(deal, s);
+            const regRows = s === "registrations" ? kvRows(deal, regKeys) : [];
+            const showEmptyIfReached = currentIdx >= 0 && idx <= currentIdx;
+
+            const hasRows = prefRows.length > 0 || regRows.length > 0 || (s === "registrations" && banksWithAny.length > 0);
+            if (!hasRows && !showEmptyIfReached) return null;
+
+            return (
+              <div key={s} className="rounded-2xl border border-black/10 bg-white p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[12px] font-extrabold text-black">{stageTitle(s)}</div>
+                  <div className="text-[10px] font-semibold text-black/40">
+                    {hasRows ? "Captured" : ""}
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-2">
+                  {prefRows.map(({ k, v }) => (
+                    <Row key={k} label={prettyKey(k.replace(s + "_", ""))} value={v} />
+                  ))}
+
+                  {s === "registrations" ? (
+                    <>
+                      {regRows.length ? (
+                        <div className="pt-1 space-y-2">
+                          {regRows.map(({ k, v }) => (
+                            <Row key={k} label={prettyKey(k)} value={v} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {banksWithAny.length ? (
+                        <div className="mt-2 rounded-2xl bg-black/[0.03] p-3">
+                          <div className="text-[11px] font-extrabold text-black/70">Banks</div>
+                          <div className="mt-2 space-y-2">
+                            {banksWithAny.map((b: any) => (
+                              <div key={String(b?.id || Math.random())} className="rounded-2xl border border-black/10 bg-white p-2">
+                                <div className="text-[11px] font-extrabold text-black">{String(b?.bank_name || "Bank")}</div>
+                                {b?.attorney ? (
+                                  <div className="mt-1 text-[11px] font-semibold text-black/70">Attorney: {String(b.attorney)}</div>
+                                ) : null}
+                                {b?.bank_notes ? (
+                                  <div className="mt-1 text-[11px] font-semibold text-black/70 whitespace-pre-wrap">
+                                    {String(b.bank_notes).slice(0, 160)}{String(b.bank_notes).length > 160 ? "" : ""}
+                                  </div>
+                                ) : null}
+                                {b?.attorney_note ? (
+                                  <div className="mt-1 text-[11px] font-semibold text-black/60 whitespace-pre-wrap">
+                                    {String(b.attorney_note).slice(0, 160)}{String(b.attorney_note).length > 160 ? "…" : ""}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {!hasRows ? (
+                    <div className="text-[11px] font-semibold text-black/35">No captured inputs for this stage yet.</div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,109 @@
+﻿import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+function normStage(v: any) {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s || "submitted";
+}
+
+function supa() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  if (!service) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+  return createClient(url, service, { auth: { persistSession: false } });
+}
+
+/**
+ * We store bank notes inside deals.aip_bank_notes as an array of objects:
+ * [{ stage: "aip", bank_name: "FNB", bank_notes: "..." }, ...]
+ */
+function getAllNotes(deal: any) {
+  const arr = deal?.aip_bank_notes ?? [];
+  return Array.isArray(arr) ? arr : [];
+}
+
+export async function GET(req: Request) {
+  try {
+    const u = new URL(req.url);
+    const dealId =
+      u.searchParams.get("dealId") ||
+      u.searchParams.get("id") ||
+      u.searchParams.get("dealKey");
+
+    const stage = normStage(u.searchParams.get("stage") || u.searchParams.get("stageKey"));
+
+    if (!dealId) {
+      return NextResponse.json({ ok: false, error: "Missing dealId" }, { status: 400 });
+    }
+
+    const sb = supa();
+
+    const { data, error } = await sb
+      .from("deals")
+      .select("id,aip_bank_notes")
+      .eq("id", dealId)
+      .single();
+
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    const all = getAllNotes(data);
+    const rows = all.filter((r: any) => normStage(r?.stage) === stage);
+
+    return NextResponse.json({ ok: true, stage, rows }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "GET failed" }, { status: 500 });
+  }
+}
+
+export async function PUT(req: Request) {
+  try {
+    const body = await req.json().catch(() => ({}));
+
+    const dealId = body?.dealId ?? body?.id ?? body?.dealKey;
+    const stage = normStage(body?.stage ?? body?.stageKey);
+    const rows = Array.isArray(body?.rows) ? body.rows : null;
+
+    if (!dealId) return NextResponse.json({ ok: false, error: "Missing dealId" }, { status: 400 });
+    if (!rows) return NextResponse.json({ ok: false, error: "Missing rows[]" }, { status: 400 });
+
+    const sb = supa();
+
+    const { data: existing, error: loadErr } = await sb
+      .from("deals")
+      .select("id,aip_bank_notes")
+      .eq("id", dealId)
+      .single();
+
+    if (loadErr) return NextResponse.json({ ok: false, error: loadErr.message }, { status: 500 });
+
+    const all = getAllNotes(existing);
+
+    // remove existing stage rows
+    const keep = all.filter((r: any) => normStage(r?.stage) !== stage);
+
+    // add incoming stage rows
+    const cleaned = rows.map((r: any) => ({
+      stage,
+      bank_name: String(r?.bank_name ?? r?.bank ?? "").trim() || null,
+      bank_notes: String(r?.bank_notes ?? r?.note ?? "").trim() || ""
+    }));
+
+    const next = [...keep, ...cleaned];
+
+    const { error: saveErr } = await sb
+      .from("deals")
+      .update({ aip_bank_notes: next })
+      .eq("id", dealId);
+
+    if (saveErr) return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
+
+    return NextResponse.json({ ok: true, stage }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "PUT failed" }, { status: 500 });
+  }
+}

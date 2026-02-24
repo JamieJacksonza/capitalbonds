@@ -1,0 +1,8 @@
+﻿import { getSessionFromRequest } from "@/app/lib/auth";
+
+export const runtime = "nodejs";
+
+export async function GET(req: Request) {
+  const user = getSessionFromRequest(req);
+  return Response.json({ ok: true, user });
+}

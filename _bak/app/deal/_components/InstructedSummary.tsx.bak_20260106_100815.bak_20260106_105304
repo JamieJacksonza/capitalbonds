@@ -1,0 +1,136 @@
+"use client";
+
+function pick(obj: any, keys: string[], fallback: any = "") {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+  }
+  return fallback;
+}
+
+function fmt(v: any) {
+  const s = String(v ?? "").trim();
+  return s ? s : "-";
+}
+
+export default function InstructedSummary({ deal }: { deal: any }) {
+  const attorney = {
+    firm: pick(deal, ["attorney_firm", "attorneyFirm"]),
+    name: pick(deal, ["attorney_name", "attorneyName"]),
+    email: pick(deal, ["attorney_email", "attorneyEmail"]),
+    phone: pick(deal, ["attorney_phone", "attorneyPhone"]),
+    ref: pick(deal, ["attorney_reference", "attorneyReference"]),
+    note: pick(deal, ["attorney_notes", "attorneyNotes"]),
+  };
+
+  // also try nested shapes (common when we store a JSON blob)
+  const nested = deal?.attorneyDetails || deal?.instructedDetails || deal?.instructedAttorney || deal?.attorney || null;
+  if (nested && typeof nested === "object") {
+    attorney.firm = attorney.firm || pick(nested, ["firm", "attorney_firm"]);
+    attorney.name = attorney.name || pick(nested, ["name", "attorney_name", "attorney"]);
+    attorney.email = attorney.email || pick(nested, ["email", "attorney_email"]);
+    attorney.phone = attorney.phone || pick(nested, ["phone", "attorney_phone", "tel", "telephone"]);
+    attorney.ref = attorney.ref || pick(nested, ["ref", "reference", "attorney_reference"]);
+    attorney.note = attorney.note || pick(nested, ["note", "notes", "attorney_notes"]);
+  }
+
+  const hasAttorney =
+    [attorney.firm, attorney.name, attorney.email, attorney.phone, attorney.ref, attorney.note]
+      .some((x) => String(x ?? "").trim() !== "");
+
+  // Debug: show ANY keys on deal containing 'attorney' so we can map real names
+  const attorneyKeyDump =
+    deal && typeof deal === "object"
+      ? Object.keys(deal)
+          .filter((k) => k.toLowerCase().includes("attorney"))
+          .sort()
+          .map((k) => ({ k, v: deal[k] }))
+      : [];
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Instructed summary</div>
+          <div className="text-xs font-semibold text-black/60">
+            Attorney details only (no bank info)
+          </div>
+        </div>
+      </div>
+
+      {!hasAttorney ? (
+        <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.02] p-4 text-sm font-semibold text-black/60">
+          No attorney details found on this deal yet.
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+          <div className="text-xs font-extrabold text-black/70">Attorney details</div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Firm</div>
+              <div className="text-sm font-semibold text-black">{fmt(attorney.firm)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Attorney</div>
+              <div className="text-sm font-semibold text-black">{fmt(attorney.name)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Email</div>
+              <div className="text-sm font-semibold text-black">{fmt(attorney.email)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3">
+              <div className="text-[11px] font-extrabold text-black/50">Phone</div>
+              <div className="text-sm font-semibold text-black">{fmt(attorney.phone)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white p-3 sm:col-span-2">
+              <div className="text-[11px] font-extrabold text-black/50">Reference</div>
+              <div className="text-sm font-semibold text-black">{fmt(attorney.ref)}</div>
+            </div>
+
+            {String(attorney.note ?? "").trim() !== "" && (
+              <div className="rounded-2xl border border-black/10 bg-white p-3 sm:col-span-2">
+                <div className="text-[11px] font-extrabold text-black/50">Attorney note</div>
+                <div className="text-sm font-semibold text-black whitespace-pre-wrap">{String(attorney.note)}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <details className="mt-4 rounded-2xl border border-black/10 bg-white p-3">
+        <summary className="cursor-pointer text-xs font-extrabold text-black/70">
+          Debug: attorney keys found on deal (click to expand)
+        </summary>
+
+        <div className="mt-2 text-xs font-semibold text-black/70">
+          <div className="mb-2">Keys on deal containing "attorney":</div>
+          {attorneyKeyDump.length === 0 ? (
+            <div className="text-black/50">None</div>
+          ) : (
+            <div className="grid gap-2">
+              {attorneyKeyDump.map((row: any) => (
+                <div key={row.k} className="rounded-xl border border-black/10 bg-black/[0.02] p-2">
+                  <div className="font-extrabold">{row.k}</div>
+                  <div className="whitespace-pre-wrap text-black/60">{String(row.v)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-3 mb-2">Nested candidates:</div>
+          <div className="rounded-xl border border-black/10 bg-black/[0.02] p-2 whitespace-pre-wrap text-black/60">
+            attorneyDetails: {JSON.stringify(deal?.attorneyDetails ?? null)}
+            {"\n"}instructedDetails: {JSON.stringify(deal?.instructedDetails ?? null)}
+            {"\n"}instructedAttorney: {JSON.stringify(deal?.instructedAttorney ?? null)}
+            {"\n"}attorney: {JSON.stringify(deal?.attorney ?? null)}
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}

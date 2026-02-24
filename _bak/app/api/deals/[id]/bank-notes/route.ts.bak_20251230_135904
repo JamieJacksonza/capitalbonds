@@ -1,0 +1,70 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type BankNoteInput = {
+  bankId: string;
+  note?: string;
+  attorney?: string;
+  attorney_note?: string;
+};
+
+async function handler(req: Request, ctx: any) {
+  try {
+    const params = await (ctx?.params ?? {});
+    const dealId = String(params?.id || "").trim();
+
+    if (!dealId) {
+      return new Response(JSON.stringify({ ok: false, error: "Missing deal id" }), { status: 400 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const bankNotes: BankNoteInput[] = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+
+    if (bankNotes.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "bankNotes[] is required" }), { status: 400 });
+    }
+
+    // Update each bank row (deal_banks) for this deal
+    for (const bn of bankNotes) {
+      const bankId = String(bn?.bankId || "").trim();
+      if (!bankId) continue;
+
+      const bank_notes = String(bn?.note ?? "").trim();
+      const attorney = String(bn?.attorney ?? "").trim();
+      const attorney_note = String(bn?.attorney_note ?? "").trim();
+
+      const { error } = await supabaseAdmin
+        .from("deal_banks")
+        .update({
+          bank_notes: bank_notes || null,
+          attorney: attorney || null,
+          attorney_note: attorney_note || null,
+        })
+        .eq("id", bankId)
+        .eq("deal_id", dealId);
+
+      if (error) {
+        console.error("BANK_NOTES_UPDATE_ERROR:", error);
+        return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("BANK_NOTES_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  return handler(req, ctx);
+}
+
+export async function POST(req: Request, ctx: any) {
+  return handler(req, ctx);
+}

@@ -1,0 +1,372 @@
+﻿"use client";
+
+import React, { useMemo } from "react";
+
+type AnyDeal = Record<string, any>;
+type StageKey = "submitted" | "aip" | "instructed" | "granted" | "registrations" | "ntu";
+
+const CONSULTANT_PALETTE = [
+  "#e11d48", // rose
+  "#2563eb", // blue
+  "#16a34a", // green
+  "#f97316", // orange
+  "#7c3aed", // violet
+  "#06b6d4", // cyan
+  "#facc15", // yellow
+  "#db2777", // pink
+  "#0f766e", // teal
+  "#a16207", // amber/brown
+  "#111827", // near-black
+  "#84cc16", // lime
+];
+
+function moneyZar(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(v));
+}
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normStage(s: any): StageKey | "" {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp" || v === "iap") return "aip";
+  if (v === "grant" || v === "approved") return "granted";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (
+    v === "submitted" ||
+    v === "aip" ||
+    v === "instructed" ||
+    v === "granted" ||
+    v === "registrations" ||
+    v === "ntu"
+  )
+    return v as StageKey;
+  return "" as any;
+}
+
+function dealConsultant(d: AnyDeal) {
+  return (
+    d?.consultant ??
+    d?.consultant_name ??
+    d?.consultantName ??
+    d?.agent ??
+    d?.agent_name ??
+    d?.agentName ??
+    d?.assigned_to ??
+    d?.owner ??
+    d?.created_by ??
+    "Unassigned"
+  );
+}
+
+function dealAmount(d: AnyDeal) {
+  const raw =
+    d?.amount_zar ??
+    d?.amountZar ??
+    d?.amount ??
+    d?.value ??
+    d?.deal_value ??
+    d?.deal_amount ??
+    d?.loan_amount ??
+    d?.bond_amount ??
+    d?.purchase_price ??
+    0;
+  return toNumber(raw);
+}
+
+function dealDateKey(d: AnyDeal): Date | null {
+  const sd = String(d?.submitted_date ?? d?.submittedDate ?? d?.submitted ?? "").trim();
+  if (sd) return new Date(("${sd}T12:00:00").replace("{$sd}", sd));
+  const ca = String(d?.created_at ?? d?.createdAt ?? "").trim();
+  if (ca) return new Date(ca);
+  return null;
+}
+
+function inRange(dt: Date | null, from?: string, to?: string) {
+  if (!dt) return true;
+  const fromDt = from ? new Date("${from}T00:00:00".replace("{$from}", from)) : null;
+  const toDt = to ? new Date("${to}T23:59:59".replace("{$to}", to)) : null;
+  if (fromDt && dt < fromDt) return false;
+  if (toDt && dt > toDt) return false;
+  return true;
+}
+
+function buildColorMap(names: string[]) {
+  const map = new Map<string, string>();
+  names.forEach((n, i) => map.set(n, CONSULTANT_PALETTE[i % CONSULTANT_PALETTE.length]));
+  return map;
+}
+
+type Row = {
+  name: string;
+  total: number;
+  deals: number;
+  byStageValue: Record<StageKey, number>;
+  score: number;
+};
+
+export default function ConsultantPipelineSummary({
+  deals,
+  title,
+  from,
+  to,
+}: {
+  deals: AnyDeal[];
+  title?: string;
+  from?: string;
+  to?: string;
+}) {
+  const model = useMemo(() => {
+    const list = Array.isArray(deals) ? deals : [];
+    const filtered = list.filter((d) => inRange(dealDateKey(d), from, to));
+
+    const names = Array.from(
+      new Set(filtered.map((d) => String(dealConsultant(d) ?? "Unassigned").trim() || "Unassigned"))
+    ).sort((a, b) => a.localeCompare(b));
+
+    const colorMap = buildColorMap(names);
+
+    const emptyStageVal = () =>
+      ({
+        submitted: 0,
+        aip: 0,
+        instructed: 0,
+        granted: 0,
+        registrations: 0,
+        ntu: 0,
+      } as Record<StageKey, number>);
+
+    const rowsMap = new Map<string, Row>();
+
+    const w: Record<StageKey, number> = {
+      submitted: 1,
+      aip: 2,
+      instructed: 3,
+      granted: 5,
+      registrations: 7,
+      ntu: 0.5,
+    };
+
+    for (const d of filtered) {
+      const st = normStage(d?.stage);
+      if (!st) continue;
+
+      const name = String(dealConsultant(d) ?? "Unassigned").trim() || "Unassigned";
+      const amt = dealAmount(d);
+
+      const cur =
+        rowsMap.get(name) ||
+        ({
+          name,
+          total: 0,
+          deals: 0,
+          byStageValue: emptyStageVal(),
+          score: 0,
+        } as Row);
+
+      cur.total += amt;
+      cur.deals += 1;
+      cur.byStageValue[st] += amt;
+      cur.score += amt * w[st];
+
+      rowsMap.set(name, cur);
+    }
+
+    const rows = Array.from(rowsMap.values()).sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const bLate = (b.byStageValue.granted + b.byStageValue.registrations);
+      const aLate = (a.byStageValue.granted + a.byStageValue.registrations);
+      if (bLate !== aLate) return bLate - aLate;
+      if (b.total !== a.total) return b.total - a.total;
+      return a.name.localeCompare(b.name);
+    });
+
+    const totalValue = rows.reduce((s, r) => s + r.total, 0);
+    const totalDeals = rows.reduce((s, r) => s + r.deals, 0);
+
+    const top = rows[0] || null;
+const runnerUp = rows[1] || null;
+
+const mostLate =
+  rows
+    .slice()
+    .sort(
+      (a, b) =>
+        (b.byStageValue.registrations + b.byStageValue.granted) -
+        (a.byStageValue.registrations + a.byStageValue.granted)
+    )[0] || null;
+
+const totalValue = rows.reduce((s, r) => s + r.total, 0);
+const totalDeals = rows.reduce((s, r) => s + r.deals, 0);
+
+const topLate = top ? (top.byStageValue.granted + top.byStageValue.registrations) : 0;
+const mostLateVal = mostLate ? (mostLate.byStageValue.granted + mostLate.byStageValue.registrations) : 0;
+
+return {
+  rows,
+  totalValue,
+  totalDeals,
+  colorMap,
+  top: top ? { name: top.name, total: top.total, deals: top.deals, late: topLate } : null,
+  runnerUp: runnerUp ? { name: runnerUp.name, total: runnerUp.total, deals: runnerUp.deals } : null,
+  mostLate: mostLate ? { name: mostLate.name, late: mostLateVal } : null,
+};
+  }, [deals, from, to]);
+
+  const header = title || "Value per Consultant (All Stages)";
+
+  return (
+    <div className="mt-6 rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <div className="text-base font-extrabold text-black">{header}</div>
+      <div className="mt-1 text-[11px] font-semibold text-black/55">
+        Ranked by weighted pipeline score (late stages count more). Tie-breakers: late-stage value, then total value.
+      </div>
+    </div>
+
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="rounded-full border border-black/10 bg-black/[0.02] px-2.5 py-1 text-[11px] font-semibold text-black/70">
+        {model.rows.length} consultants
+      </span>
+      <span className="rounded-full border border-black/10 bg-black/[0.02] px-2.5 py-1 text-[11px] font-semibold text-black/70">
+        {model.totalDeals} deals
+      </span>
+      <span className="rounded-full border border-black/10 bg-black/[0.02] px-2.5 py-1 text-[11px] font-extrabold text-black">
+        {moneyZar(model.totalValue)}
+      </span>
+    </div>
+  </div>
+
+  {(model.top || model.runnerUp || model.mostLate) ? (
+    <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+        <div className="text-[10px] font-extrabold text-black/55">Top ranked</div>
+        {model.top ? (
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20"
+                  style={{ backgroundColor: (model.colorMap.get(model.top.name) || "#111827") }}
+                />
+                <div className="truncate text-sm font-extrabold text-black">{model.top.name}</div>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold text-black/60">
+                {model.top.deals} deals  Late {moneyZar(model.top.late)}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[10px] font-extrabold text-black/50">Total</div>
+              <div className="text-sm font-extrabold text-black whitespace-nowrap">{moneyZar(model.top.total)}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-[11px] font-semibold text-black/60">No data yet.</div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+        <div className="text-[10px] font-extrabold text-black/55">Next in line</div>
+        {model.runnerUp ? (
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20"
+                  style={{ backgroundColor: (model.colorMap.get(model.runnerUp.name) || "#111827") }}
+                />
+                <div className="truncate text-sm font-extrabold text-black">{model.runnerUp.name}</div>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold text-black/60">
+                {model.runnerUp.deals} deals
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[10px] font-extrabold text-black/50">Total</div>
+              <div className="text-sm font-extrabold text-black whitespace-nowrap">{moneyZar(model.runnerUp.total)}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-[11px] font-semibold text-black/60"></div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+        <div className="text-[10px] font-extrabold text-black/55">Strongest late-stage</div>
+        {model.mostLate ? (
+          <div className="mt-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20"
+                  style={{ backgroundColor: (model.colorMap.get(model.mostLate.name) || "#111827") }}
+                />
+                <div className="truncate text-sm font-extrabold text-black">{model.mostLate.name}</div>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold text-black/60">
+                Granted + Registrations
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[10px] font-extrabold text-black/50">Late value</div>
+              <div className="text-sm font-extrabold text-black whitespace-nowrap">{moneyZar(model.mostLate.late)}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-[11px] font-semibold text-black/60"></div>
+        )}
+      </div>
+    </div>
+  ) : null}
+
+  <div className="mt-5 overflow-hidden rounded-2xl border border-black/10">
+    <div className="grid grid-cols-12 bg-black/[0.03] px-4 py-2 text-[10px] font-extrabold text-black/60">
+      <div className="col-span-1 text-right">#</div>
+      <div className="col-span-5">Consultant</div>
+      <div className="col-span-2 text-right">Deals</div>
+      <div className="col-span-2 text-right">Late-stage</div>
+      <div className="col-span-2 text-right">Total</div>
+    </div>
+
+    {model.rows.length === 0 ? (
+      <div className="px-4 py-3 text-xs font-semibold text-black/45">No deals found in this range.</div>
+    ) : (
+      model.rows.map((r, idx) => {
+        const c = model.colorMap.get(r.name) || "#111827";
+        const late = r.byStageValue.granted + r.byStageValue.registrations;
+
+        return (
+          <div
+            key={r.name}
+            className="grid grid-cols-12 items-center px-4 py-2.5 text-[11px] font-semibold text-black border-t border-black/10 hover:bg-black/[0.02]"
+          >
+            <div className="col-span-1 text-right text-black/60 font-extrabold">{idx + 1}</div>
+
+            <div className="col-span-5 flex min-w-0 items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20" style={{ backgroundColor: c }} />
+              <div className="min-w-0 truncate font-extrabold">{r.name}</div>
+            </div>
+
+            <div className="col-span-2 text-right font-extrabold">{r.deals}</div>
+            <div className="col-span-2 text-right font-extrabold">{moneyZar(late)}</div>
+            <div className="col-span-2 text-right font-extrabold">{moneyZar(r.total)}</div>
+          </div>
+        );
+      })
+    )}
+  </div>
+</div>
+  );
+}
+
+

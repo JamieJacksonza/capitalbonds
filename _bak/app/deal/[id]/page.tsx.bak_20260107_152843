@@ -1,0 +1,76 @@
+﻿import { useParams, useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+import DealViewClient from "./DealViewClient";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+async function fetchDealByKey(key: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  if (!serviceKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+  const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+
+  // try id first if uuid, else deal_code
+  if (isUuid(key)) {
+    const r = await sb.from("deals").select("*").eq("id", key).maybeSingle();
+    if (r.data) return r;
+  }
+
+  const r2 = await sb.from("deals").select("*").eq("deal_code", key).maybeSingle();
+  if (r2.data) return r2;
+
+  // fallback: still try id
+  const r3 = await sb.from("deals").select("*").eq("id", key).maybeSingle();
+  return r3;
+}
+
+export default async function DealDetailPage({ params }: { params: { id: string } }) {
+  const dealKey = decodeURIComponent(String(params?.id || "")).trim();
+
+  if (!dealKey) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border bg-white p-6 text-sm text-zinc-700">
+          Missing deal id.
+        </div>
+      </div>
+    );
+  }
+
+  const r = await fetchDealByKey(dealKey);
+  if (r.error) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Could not load deal</div>
+          <div className="mt-2 text-sm text-red-600">{r.error.message}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!r.data) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border bg-white p-6 text-sm text-zinc-700">
+          Deal not found.
+        </div>
+      </div>
+    );
+  }
+
+  // ensure serializable
+  const deal = JSON.parse(JSON.stringify(r.data));
+
+  return <DealViewClient deal={deal} />;
+}
+

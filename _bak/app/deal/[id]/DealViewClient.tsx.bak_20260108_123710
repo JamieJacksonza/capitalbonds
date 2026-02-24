@@ -1,0 +1,624 @@
+﻿"use client";
+
+import React from "react";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+type DealRow = Record<string, unknown>;
+type ActivityRow = {
+  id?: string;
+  deal_id?: string;
+  deal_code?: string;
+  from_stage?: string | null;
+  to_stage?: string | null;
+  actor?: string | null;
+  moved_by?: string | null;
+  action?: string | null;
+  note?: string | null;
+  moved_at?: string | null;
+  created_at?: string | null;
+};
+
+type SbError = { message?: string } | null;
+type SbSingle<T> = { data: T | null; error: SbError };
+type SbMany<T> = { data: T[] | null; error: SbError };
+
+let _sb: ReturnType<typeof createClient> | null = null;
+function getSb() {
+  if (_sb) return _sb;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("Supabase env vars missing (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+  }
+
+  _sb = createClient(url, key);
+  return _sb;
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function safeDecode(v: string) {
+  try { return decodeURIComponent(v); } catch { return v; }
+}
+
+function fmtZar(v: unknown) {
+  const n = Number(v);
+  if (!isFinite(n)) return "";
+  try {
+    return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return `R${Math.round(n).toLocaleString("en-ZA")}`;
+  }
+}
+
+function fmtDate(v: unknown) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (isNaN(d.getTime())) return String(v);
+  return new Intl.DateTimeFormat("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+}
+
+function fmtDateTime(v: unknown) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (isNaN(d.getTime())) return String(v);
+  return new Intl.DateTimeFormat("en-ZA", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }).format(d);
+}
+
+function errMsg(e: unknown, fallback: string) {
+  if (e instanceof Error && e.message) return e.message;
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  return fallback;
+}
+
+function isNonEmpty(v: unknown) {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim().length > 0;
+  if (typeof v === "number") return isFinite(v);
+  if (typeof v === "boolean") return true;
+  if (v instanceof Date) return !isNaN(v.getTime());
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v as Record<string, unknown>).length > 0;
+  return Boolean(v);
+}
+
+function prettyKey(k: string) {
+  return k
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function pill(label: string) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-800">
+      {label}
+    </span>
+  );
+}
+
+function Field({ label, value }: { label: string; value: unknown }) {
+  const isEmpty = value === null || value === undefined || value === "";
+  const isObjOrArr = !isEmpty && typeof value === "object";
+
+  const simple =
+    isEmpty ? "" :
+    (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+      ? String(value)
+      : "";
+
+  const pretty =
+    !isEmpty && isObjOrArr
+      ? (() => {
+          try {
+            return JSON.stringify(value, null, 2);
+          } catch {
+            return String(value);
+          }
+        })()
+      : "";
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
+
+      {isEmpty ? (
+        <div className="mt-1 text-sm text-zinc-400"></div>
+      ) : pretty ? (
+        <pre className="mt-2 max-h-64 overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-900 whitespace-pre-wrap font-mono">
+          {pretty}
+        </pre>
+      ) : (
+        <div className="mt-1 text-sm font-semibold text-zinc-900 break-words">{simple}</div>
+      )}
+    </div>
+  );
+}
+
+function MoveHistoryCard({ value }: { value: unknown }) {
+  const { list, fallback } = React.useMemo(() => {
+    let v: unknown = value;
+
+    if (typeof v === "string") {
+      try { v = JSON.parse(v); } catch { /* keep string */ }
+    }
+
+    if (Array.isArray(v)) {
+      const arr = v.filter(Boolean).map((x) => (typeof x === "object" && x ? (x as Record<string, unknown>) : ({ value: x })));
+      return { list: arr, fallback: "" };
+    }
+
+    if (v && typeof v === "object") {
+      // some people store this as { history: [...] }
+      const maybe = (v as Record<string, unknown>)["history"];
+      if (Array.isArray(maybe)) {
+        const arr = maybe.filter(Boolean).map((x) => (typeof x === "object" && x ? (x as Record<string, unknown>) : ({ value: x })));
+        return { list: arr, fallback: "" };
+      }
+    }
+
+    // Fallback: pretty print whatever it is
+    let pretty = "";
+    try { pretty = JSON.stringify(value, null, 2); } catch { pretty = String(value ?? ""); }
+    return { list: null, fallback: pretty };
+  }, [value]);
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="text-xs font-medium text-zinc-500">Move history</div>
+
+      {list && list.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {list.slice(0, 100).map((it, idx) => {
+            const at = fmtDateTime(it.at ?? it.moved_at ?? it.created_at);
+            const from = String(it.from ?? it.from_stage ?? "").trim();
+            const to = String(it.to ?? it.to_stage ?? "").trim();
+            const by = String(it.by ?? it.moved_by ?? it.actor ?? "system").trim();
+            const note = it.note ? String(it.note) : "";
+
+            return (
+              <div key={String(it.id ?? idx)} className="rounded-xl border border-zinc-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-zinc-900">
+                    {by}
+                    {from || to ? (
+                      <span className="text-zinc-500 font-medium">
+                        {" "}
+                        {from && to ? `${from}  ${to}` : (to || from)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-zinc-500">{at}</div>
+                </div>
+
+                {note ? (
+                  <div className="mt-2 text-sm text-zinc-700 whitespace-pre-wrap">{note}</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <pre className="mt-2 max-h-64 overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-900 whitespace-pre-wrap font-mono">
+          {fallback || ""}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function CopyBtn({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+
+  return (
+    <button
+      onClick={onCopy}
+      className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+      type="button"
+      aria-label="Copy"
+    >
+      {copied ? "Copied" : (label ? "Copy " + label : "Copy")}
+    </button>
+  );
+}
+
+type RouteParams = { id?: string | string[] };
+
+export default function DealViewClient({ dealKey }: { dealKey?: string }) {
+  const params = useParams<RouteParams>();
+  const searchParams = useSearchParams();
+
+  const resolvedKey = React.useMemo(() => {
+    const fromProp = (dealKey || "").toString();
+    const routeRaw = params?.id;
+    const fromRoute = Array.isArray(routeRaw) ? routeRaw[0] : (routeRaw || "").toString();
+
+    const fromQuery =
+      searchParams.get("id") ||
+      searchParams.get("dealId") ||
+      searchParams.get("code") ||
+      searchParams.get("deal_code") ||
+      "";
+
+    const k = safeDecode((fromProp || fromRoute || fromQuery || "").toString()).trim();
+    if (!k || k === "undefined" || k === "null") return "";
+    return k;
+  }, [dealKey, params, searchParams]);
+
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [deal, setDeal] = React.useState<DealRow | null>(null);
+
+  const [activity, setActivity] = React.useState<ActivityRow[]>([]);
+  const [loadingActivity, setLoadingActivity] = React.useState(false);
+
+  React.useEffect(() => {
+    let ignore = false;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setErr(null);
+
+        if (!resolvedKey) {
+          setDeal(null);
+          setErr("Missing deal id");
+          return;
+        }
+
+        const supabase = getSb();
+
+        let r: SbSingle<DealRow>;
+        if (isUuid(resolvedKey)) {
+          r = (await supabase.from("deals").select("*").eq("id", resolvedKey).maybeSingle()) as SbSingle<DealRow>;
+        } else {
+          r = (await supabase.from("deals").select("*").eq("deal_code", resolvedKey).maybeSingle()) as SbSingle<DealRow>;
+        }
+
+        if (r?.error) throw r.error;
+        if (!r?.data) {
+          setDeal(null);
+          setErr("Deal not found");
+          return;
+        }
+
+        if (!ignore) setDeal(r.data);
+      } catch (e: unknown) {
+        if (!ignore) setErr(errMsg(e, "Failed to load deal"));
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+
+    run();
+    return () => { ignore = true; };
+  }, [resolvedKey]);
+
+  React.useEffect(() => {
+    let ignore = false;
+
+    async function run() {
+      if (!deal || typeof deal.id !== "string" || !deal.id) return;
+
+      try {
+        setLoadingActivity(true);
+
+        const supabase = getSb();
+
+        const r = (await supabase
+          .from("deal_activity")
+          .select("id, deal_id, deal_code, from_stage, to_stage, actor, moved_by, action, note, moved_at, created_at")
+          .eq("deal_id", deal.id)
+          .order("moved_at", { ascending: false })
+          .limit(50)) as SbMany<ActivityRow>;
+
+        if (r.error) throw r.error;
+        if (!ignore) setActivity(Array.isArray(r.data) ? r.data : []);
+      } catch {
+        if (!ignore) setActivity([]);
+      } finally {
+        if (!ignore) setLoadingActivity(false);
+      }
+    }
+
+    run();
+    return () => { ignore = true; };
+  }, [deal]);
+
+  const top = React.useMemo(() => {
+    if (!deal) return null;
+    const code = (deal.deal_code as string) || (deal.id as string) || "";
+    const stage = (deal.stage as string) || "";
+    const amount = fmtZar(deal.amount_zar);
+    const applicant = (deal.applicant as string) || "";
+    const consultant = (deal.consultant as string) || (deal.agent_name as string) || "";
+    const submitted = deal.submitted_date ? fmtDate(deal.submitted_date) : "";
+    return { code, stage, amount, applicant, consultant, submitted };
+  }, [deal]);
+
+  const copyTargets = React.useMemo(() => {
+    if (!deal) return null;
+    return {
+      code: String(deal.deal_code || ""),
+      email: String(deal.applicant_email || ""),
+      cell: String(deal.applicant_cell || ""),
+      address: String(deal.property_address || ""),
+    };
+  }, [deal]);
+
+
+  const shownKeys = React.useMemo(() => {
+    // Keys already displayed explicitly in the UI
+    return new Set<string>([
+      "id",
+      "deal_code",
+      "stage",
+      "amount_zar",
+      "bank",
+      "submitted_date",
+      "applicant",
+      "applicant_email",
+      "applicant_cell",
+      "consultant",
+      "agent_name",
+      "attorney",
+      "property_address",
+      "registration_number",
+      "registration_attorney",
+      "registration_attorney_contact",
+      "registration_attorney_tel",
+      "registration_attorney_email",
+      "registration_attorney_reference",
+      "notes",
+      "created_at",
+      "updated_at",
+    ]);
+  }, []);
+
+  const extraFields = React.useMemo(() => {
+    if (!deal) return [];
+    const entries = Object.entries(deal as Record<string, unknown>)
+      .filter(([k, v]) => !shownKeys.has(k) && isNonEmpty(v))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    return entries;
+  }, [deal, shownKeys]);
+
+  const [showMore, setShowMore] = React.useState(false);
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => window.history.back()}
+            className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            aria-label="Back"
+          >
+            Back
+          </button>
+          <Link
+            href="/"
+            className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+          >
+             Dashboard
+          </Link>
+          <div className="text-sm text-zinc-500">Deal</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {deal && typeof deal.stage === "string" && deal.stage ? pill(String(deal.stage)) : null}
+          {deal && typeof deal.bank === "string" && deal.bank ? pill(String(deal.bank)) : null}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+        {loading ? (
+          <div className="space-y-3">
+            <div className="h-6 w-64 rounded bg-zinc-100" />
+            <div className="h-4 w-80 rounded bg-zinc-100" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+              <div className="h-16 rounded-xl bg-zinc-100" />
+              <div className="h-16 rounded-xl bg-zinc-100" />
+              <div className="h-16 rounded-xl bg-zinc-100" />
+            </div>
+          </div>
+        ) : err ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            {err}
+            <div className="mt-2 text-xs text-rose-900/80">
+              Debug key: <span className="font-mono">{resolvedKey || "EMPTY"}</span>
+            </div>
+          </div>
+        ) : top ? (
+          <div className="space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-2xl font-bold text-zinc-900">{top.code}</div>
+                <div className="mt-1 text-sm text-zinc-600">
+                  {top.submitted}  {top.consultant}
+                </div>
+              </div>
+
+              {copyTargets ? (
+                <div className="hidden md:flex items-center gap-2">
+                  {copyTargets.code ? <CopyBtn value={copyTargets.code} label="Code" /> : null}
+                  {copyTargets.email ? <CopyBtn value={copyTargets.email} label="Email" /> : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Field label="Stage" value={top.stage} />
+              <Field label="Amount" value={top.amount} />
+              <Field label="Bank" value={deal?.bank} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {!loading && !err && deal ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Applicant</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Name" value={deal.applicant} />
+                <Field label="Email" value={deal.applicant_email} />
+                <Field label="Cell" value={deal.applicant_cell} />
+                <Field label="Submitted date" value={fmtDate(deal.submitted_date)} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Parties</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Consultant" value={deal.consultant} />
+                <Field label="Agent" value={deal.agent_name} />
+                <Field label="Attorney" value={deal.attorney} />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Property</div>
+              <div className="mt-4 grid grid-cols-1 gap-3">
+                <Field label="Address" value={deal.property_address} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Registration</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Registration #" value={deal.registration_number} />
+                <Field label="Attorney" value={deal.registration_attorney} />
+                <Field label="Contact" value={deal.registration_attorney_contact} />
+                <Field label="Tel" value={deal.registration_attorney_tel} />
+                <Field label="Email" value={deal.registration_attorney_email} />
+                <Field label="Reference" value={deal.registration_attorney_reference} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Notes</div>
+              <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-800 whitespace-pre-wrap">
+                {String(deal.notes || "")}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}      {!loading && !err && deal ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-900">More details</div>
+            <button
+              type="button"
+              onClick={() => setShowMore((v) => !v)}
+              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
+              aria-label="Toggle more details"
+            >
+              {showMore ? "Hide" : `Show (${extraFields.length})`}
+            </button>
+          </div>
+
+          {showMore ? (
+            extraFields.length === 0 ? (
+              <div className="mt-3 text-sm text-zinc-600">No extra fields.</div>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                {extraFields.map(([k, v]) => {
+  const key = String(k);
+  const isMoveHistory = key === "move_history" || key === "moveHistory";
+
+  if (isMoveHistory) {
+    return (
+      <div key={key} className="md:col-span-2">
+        <MoveHistoryCard value={v} />
+      </div>
+    );
+  }
+
+  return <Field key={key} label={prettyKey(key)} value={v} />;
+})}
+              </div>
+            )
+          ) : (
+            <div className="mt-2 text-xs text-zinc-500">
+              Shows any non-empty Supabase fields not already displayed above.
+            </div>
+          )}
+        </div>
+      ) : null}
+
+
+      {!loading && !err && deal ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-900">Timeline</div>
+            <div className="text-xs text-zinc-500">
+              {loadingActivity ? "Loading" : `${activity.length} items`}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {loadingActivity ? (
+              <div className="h-16 rounded-xl bg-zinc-100" />
+            ) : activity.length === 0 ? (
+              <div className="text-sm text-zinc-600">No activity yet.</div>
+            ) : (
+              activity.map((a, idx) => (
+                <div key={a.id || idx} className="rounded-xl border border-zinc-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-zinc-900">
+                      {(a.actor || a.moved_by || "system").toString()}
+                      {a.from_stage || a.to_stage ? (
+                        <span className="text-zinc-500 font-medium">
+                          {" "}
+                           {a.from_stage && a.to_stage ? String(a.from_stage) + " → " + String(a.to_stage) : String(a.to_stage || a.from_stage || "")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="text-xs text-zinc-500">{fmtDateTime(a.moved_at || a.created_at)}</div>
+                  </div>
+
+                  {a.note ? (
+                    <div className="mt-2 text-sm text-zinc-700 whitespace-pre-wrap">{String(a.note)}</div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+
+
+

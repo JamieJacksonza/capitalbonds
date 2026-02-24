@@ -1,0 +1,128 @@
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url) throw new Error("Missing env NEXT_PUBLIC_SUPABASE_URL");
+  if (!key) throw new Error("Missing Supabase key env. Add SUPABASE_SERVICE_ROLE_KEY to .env.local");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+type BankNotePayload = {
+  bankId: string;
+  note?: string;
+  attorney?: string;
+  attorney_note?: string;
+};
+
+export async function PATCH(req: Request) {
+  const id = getIdFromUrl(req);
+  if (!id) return json({ ok: false, error: "Missing id" }, 400);
+
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  const toStage =
+    typeof body?.toStage === "string"
+      ? body.toStage
+      : typeof body?.stage === "string"
+      ? body.stage
+      : null;
+
+  const movedBy = typeof body?.movedBy === "string" ? body.movedBy : null;
+  const note = typeof body?.note === "string" ? body.note : "";
+
+  const registration =
+    body?.registration && typeof body.registration === "object" ? body.registration : null;
+
+  const bankNotes: BankNotePayload[] = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+
+  // 1) UPDATE DEAL (ONLY real deals columns)  NEVER include bankNotes here
+  const dealUpdate: Record<string, any> = {};
+
+  if (toStage) dealUpdate.stage = toStage;
+
+  // Optional: store move note on deals.notes (if you don't want this, delete next 2 lines)
+  if (note && note.trim()) dealUpdate.notes = note.trim();
+
+  if (movedBy) {
+    dealUpdate.last_moved_by = movedBy;
+    dealUpdate.last_moved_at = new Date().toISOString();
+  }
+
+  if (registration) {
+    if ("registration_number" in registration) dealUpdate.registration_number = registration.registration_number ?? null;
+    if ("registration_attorney" in registration) dealUpdate.registration_attorney = registration.registration_attorney ?? null;
+    if ("registration_attorney_tel" in registration) dealUpdate.registration_attorney_tel = registration.registration_attorney_tel ?? null;
+    if ("registration_attorney_contact" in registration) dealUpdate.registration_attorney_contact = registration.registration_attorney_contact ?? null;
+    if ("agent_comm_paid" in registration) dealUpdate.agent_comm_paid = registration.agent_comm_paid ?? null;
+    if ("payment_due_date" in registration) dealUpdate.payment_due_date = registration.payment_due_date ?? null;
+  }
+
+  const dealRes = await supabase
+    .from("deals")
+    .update(dealUpdate)
+    .eq("id", id)
+    .select("id");
+
+  if (dealRes.error) {
+    return json({ ok: false, where: "deals.update", error: dealRes.error.message }, 500);
+  }
+
+  // 2) UPDATE BANKS (this is where bank notes belong)
+  for (const bn of bankNotes) {
+    if (!bn?.bankId) continue;
+
+    const patch: Record<string, any> = {};
+
+    if (typeof bn.note !== "undefined") patch.bank_notes = String(bn.note || "").trim() || null;
+    if (typeof bn.attorney !== "undefined") patch.attorney = String(bn.attorney || "").trim() || null;
+    if (typeof bn.attorney_note !== "undefined") patch.attorney_note = String(bn.attorney_note || "").trim() || null;
+
+    if (Object.keys(patch).length === 0) continue;
+
+    const bRes = await supabase
+      .from("banks")
+      .update(patch)
+      .eq("id", bn.bankId)
+      .eq("deal_id", id)
+      .select("id");
+
+    if (bRes.error) {
+      return json({ ok: false, where: "banks.update", bankId: bn.bankId, error: bRes.error.message }, 500);
+    }
+  }
+
+  return json({ ok: true });
+}

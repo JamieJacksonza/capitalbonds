@@ -1,0 +1,214 @@
+﻿"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+
+type Props = {
+  dealKey?: string;
+  amountZar?: number | null;
+  stage?: string | null;
+};
+
+const BANKS = [
+  { key: "FNB", label: "FNB" },
+  { key: "ABSA", label: "ABSA" },
+  { key: "Standard Bank", label: "Standard Bank" },
+  { key: "Nedbank", label: "Nedbank" },
+] as const;
+
+type BankKey = (typeof BANKS)[number]["key"];
+
+type BankApiRow = {
+  id?: string;
+  bank_name?: string;
+  bank_notes?: string;
+};
+
+function normBankName(v: any): BankKey | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+
+  // normalize a few common variants
+  if (lower.includes("standard")) return "Standard Bank";
+  if (lower.includes("ned")) return "Nedbank";
+  if (lower.includes("absa")) return "ABSA";
+  if (lower.includes("fnb")) return "FNB";
+
+  // exact match fallback
+  const hit = BANKS.find((b) => b.key.toLowerCase() === lower);
+  return (hit?.key as BankKey) ?? null;
+}
+
+export default function StatusBankNotesCard({ dealKey, amountZar, stage }: Props) {
+  const key = useMemo(() => String(dealKey ?? "").trim(), [dealKey]);
+  const stageKey = useMemo(() => String(stage ?? "").trim().toLowerCase() || "submitted", [stage]);
+
+  const [rows, setRows] = useState<Record<BankKey, { id?: string; bank_name: BankKey; note: string }>>(() => {
+    const base: any = {};
+    for (const b of BANKS) base[b.key] = { bank_name: b.key, note: "", id: undefined };
+    return base;
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    async function run() {
+      if (!key) return;
+      setLoading(true);
+      setMsg(null);
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(String(key || ""))}/bank-notes`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({} as any));
+        if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load bank notes");
+
+        const apiBanks: BankApiRow[] = Array.isArray(json?.banks) ? json.banks : [];
+        const next: any = {};
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: "", id: undefined };
+
+        for (const r of apiBanks) {
+          const name = normBankName(r?.bank_name);
+          if (!name) continue;
+          next[name] = { bank_name: name, note: String(r?.bank_notes ?? "").trim(), id: r?.id ? String(r.id) : undefined };
+        }
+
+        if (alive) setRows(next);
+      } catch (e: any) {
+        if (alive) setMsg({ type: "err", text: e?.message || "Failed to load bank notes" });
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    run();
+    return () => { alive = false; };
+  }, [key]);
+
+  async function save() {
+    if (!key) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const payload = {
+        stage: stageKey,
+        bankNotes: BANKS.map((b) => {
+          const r = rows[b.key];
+          return {
+            id: r?.id ?? null,
+            bank_name: b.key,
+            bank_notes: String(r?.note ?? "").trim() || null,
+          };
+        }),
+      };
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(String(key || ""))}/bank-notes`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to save bank notes");
+
+      // reload after save
+      const reload = await fetch(`/api/deals/${encodeURIComponent(String(key || ""))}/bank-notes`, { cache: "no-store" });
+      const reloadJson = await reload.json().catch(() => ({} as any));
+      if (reload.ok && reloadJson?.ok && Array.isArray(reloadJson?.banks)) {
+        const apiBanks: BankApiRow[] = reloadJson.banks;
+        const next: any = {};
+        for (const b of BANKS) next[b.key] = { bank_name: b.key, note: String(rows[b.key]?.note ?? ""), id: rows[b.key]?.id };
+
+        for (const r of apiBanks) {
+          const name = normBankName(r?.bank_name);
+          if (!name) continue;
+          next[name] = { bank_name: name, note: String(r?.bank_notes ?? "").trim(), id: r?.id ? String(r.id) : undefined };
+        }
+        setRows(next);
+      }
+
+      setMsg({ type: "ok", text: "Saved." });
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to save." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const amountLine =
+    typeof amountZar === "number" && Number.isFinite(amountZar)
+      ? R 
+      : null;
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Bank Notes</div>
+          <div className="mt-1 text-[12px] font-semibold text-black/60">
+            Stage: <span className="text-black">{stageKey}</span>
+            {amountLine ? <>  Amount: <span className="text-black">{amountLine}</span></> : null}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={save}
+          disabled={!key || loading || saving}
+          className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20 disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+
+      {msg ? (
+        <div
+          className={`mt-3 rounded-2xl border px-3 py-2 text-xs font-semibold ${msg?.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-900"}`}
+        >
+          {msg.text}
+        </div>
+      ) : null}
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full border-separate border-spacing-0">
+          <thead>
+            <tr className="text-[11px] font-extrabold text-black/70">
+              {BANKS.map((b) => (
+                <th key={b.key} className="px-4 py-2 text-left border-b border-black/10">
+                  {b.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {BANKS.map((b) => (
+                <td key={b.key} className="px-4 py-3 align-top border-b border-black/10">
+                  <textarea
+                    value={rows[b.key]?.note ?? ""}
+                    onChange={(e) =>
+                      setRows((prev) => ({
+                        ...prev,
+                        [b.key]: { ...(prev[b.key] || { bank_name: b.key }), bank_name: b.key, note: e.target.value },
+                      }))
+                    }
+                    rows={4}
+                    className="w-full rounded-2xl border border-black/10 bg-white p-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    placeholder="Type notes..."
+                  />
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="mt-3 text-[11px] font-semibold text-black/50">
+          Tip: this loads/saves via <span className="font-bold text-black">/api/deals/[id]/bank-notes</span>.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+

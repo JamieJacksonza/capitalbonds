@@ -1,0 +1,8 @@
+﻿import BankStatusTable from "../_components/BankStatusTable";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default function BankStatusPage() {
+  return <BankStatusTable />;
+}

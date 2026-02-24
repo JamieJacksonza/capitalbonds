@@ -1,0 +1,32 @@
+import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const stage = url.searchParams.get("stage"); // optional
+
+    let q = supabaseAdmin
+      .from("deals").select("*, banks:deal_banks(*), registration_number, registration_attorney, registration_attorney_tel, registration_attorney_contact, agent_comm_paid, payment_due_date")
+      .order("created_at", { ascending: false });
+
+    if (stage) q = q.eq("stage", stage);
+
+    const { data, error } = await q;
+
+    if (error) {
+      console.error("DEALS_GET_SUPABASE_ERROR:", error);
+      return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+    }
+
+    return new Response(JSON.stringify({ ok: true, deals: data ?? [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("DEALS_GET_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}

@@ -1,0 +1,239 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import MoveDealModal from "@/app/_components/MoveDealModal";
+
+type Stage = "submitted" | "aip" | "instructed" | "granted" | "ntu";
+
+const stageTitle: Record<Stage, string> = {
+  submitted: "Submitted",
+  aip: "AIP",
+  instructed: "Instructed",
+  granted: "Granted",
+  ntu: "NTU",
+};
+
+function money(n: number) {
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
+}
+
+function cls(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+export default function DealDetailPage() {
+  const params = useParams<{ id?: string | string[] }>();
+  const raw = params?.id;
+  const dealId = useMemo(() => {
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    return decodeURIComponent(String(v || "")).trim();
+  }, [raw]);
+
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  const [deal, setDeal] = useState<any>(null);
+  const [banks, setBanks] = useState<any[]>([]);
+  const [stageNotes, setStageNotes] = useState<any[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
+
+  const [openMove, setOpenMove] = useState(false);
+
+  async function load() {
+    if (!dealId) return;
+    try {
+      setLoading(true);
+      setErr("");
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || `Failed to load deal (${res.status})`);
+
+      setDeal(data.deal);
+      setBanks(data.banks || []);
+      setStageNotes(data.stageNotes || []);
+      setActivity(data.activity || []);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load deal");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [dealId]);
+
+  const currentStage = useMemo(() => {
+    const s = String(deal?.stage || "submitted").toLowerCase();
+    if (s === "submitted" || s === "aip" || s === "instructed" || s === "granted" || s === "ntu") return s as Stage;
+    return "submitted";
+  }, [deal]);
+
+  function notesForBank(bankId: string) {
+    return stageNotes
+      .filter((n) => n.deal_bank_id === bankId)
+      .sort((a, b) => String(a.stage).localeCompare(String(b.stage)));
+  }
+
+  if (loading) {
+    return <div className="mx-auto max-w-6xl px-6 py-10 text-sm font-semibold text-black/70">Loading...</div>;
+  }
+
+  if (err || !deal) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm font-extrabold text-red-700">
+          {err || "Deal not found"}
+        </div>
+        <div className="mt-4">
+          <Link href="/" className="rounded-xl bg-black px-4 py-3 text-xs font-extrabold text-white hover:opacity-90">
+            Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // IMPORTANT: this is the CLIENT requested amount (NOT cumulative across banks)
+  const requestedAmount = Number(deal.amount_zar ?? deal.amount ?? 0);
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 px-6 py-10">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Deal</div>
+          <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-black">{deal.applicant}</h1>
+          <p className="mt-2 text-sm font-semibold text-black/75">
+            Email: <span className="font-extrabold text-black">{deal.applicant_email || ""}</span>{" "}
+            Cell: <span className="font-extrabold text-black">{deal.applicant_cell || ""}</span>
+          </p>
+          <p className="mt-1 text-sm font-semibold text-black/75">
+            Consultant: <span className="font-extrabold text-black">{deal.consultant || ""}</span>{" "}
+            Stage: <span className="font-extrabold text-black">{stageTitle[currentStage]}</span>
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/"
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Dashboard
+          </Link>
+
+          <button
+            onClick={() => setOpenMove(true)}
+            className="rounded-xl bg-black px-4 py-3 text-xs font-extrabold text-white hover:opacity-90"
+          >
+            Move + Notes
+          </button>
+        </div>
+      </header>
+
+      <section className="grid gap-4 sm:grid-cols-2">
+        <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+          <div className="text-xs font-extrabold text-black">Requested bond amount (client)</div>
+          <div className="mt-2 text-3xl font-extrabold tracking-tight text-black">{money(requestedAmount)}</div>
+          <div className="mt-2 text-sm font-semibold text-black/70">This is not a bank cumulative total.</div>
+        </div>
+
+        <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+          <div className="text-xs font-extrabold text-black">Deal code</div>
+          <div className="mt-2 text-2xl font-extrabold text-black">{deal.deal_code || deal.id}</div>
+          <div className="mt-2 text-sm font-semibold text-black/70">Created: {String(deal.created_at || "").slice(0,10)}</div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="text-lg font-extrabold text-black">Banks + Notes</div>
+        <div className="mt-1 text-sm font-semibold text-black/70">
+          Notes are stored per bank per stage. Attorney info appears in Instructed + Granted.
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {banks.length === 0 ? (
+            <div className="text-sm font-semibold text-black/60">No banks linked to this deal.</div>
+          ) : (
+            banks.map((b) => {
+              const ns = notesForBank(b.id);
+              return (
+                <div key={b.id} className="rounded-2xl border border-black/10 bg-white p-5">
+                  <div className="text-sm font-extrabold text-black">{b.bank_name}</div>
+
+                  <div className="mt-3 space-y-3">
+                    {ns.length === 0 ? (
+                      <div className="text-sm font-semibold text-black/60">No notes saved yet.</div>
+                    ) : (
+                      ns.map((n: any) => (
+                        <div key={n.id} className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                          <div className="text-xs font-extrabold text-black/60">
+                            Stage: <span className="text-black">{String(n.stage).toUpperCase()}</span>
+                          </div>
+
+                          {n.note ? (
+                            <div className="mt-2 text-sm font-semibold text-black">{n.note}</div>
+                          ) : (
+                            <div className="mt-2 text-sm font-semibold text-black/60"></div>
+                          )}
+
+                          {(String(n.stage).toLowerCase() === "instructed" || String(n.stage).toLowerCase() === "granted") ? (
+                            <div className="mt-3 rounded-2xl border border-black/10 bg-white p-4">
+                              <div className="text-xs font-extrabold text-black/60">Attorney</div>
+                              <div className="mt-1 text-sm font-extrabold text-black">
+                                {(n.attorney_name || "")} {n.attorney_firm ? <span className="text-black/60">({n.attorney_firm})</span> : null}
+                              </div>
+                              <div className="mt-2 text-sm font-semibold text-black">
+                                {n.attorney_note || <span className="text-black/60"></span>}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="text-lg font-extrabold text-black">Move history</div>
+        <div className="mt-4 space-y-3">
+          {activity.length === 0 ? (
+            <div className="text-sm font-semibold text-black/60">No moves logged yet.</div>
+          ) : (
+            activity.map((m: any) => (
+              <div key={m.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm font-extrabold text-black">
+                    {String(m.from_stage).toUpperCase()}  {String(m.to_stage).toUpperCase()}
+                  </div>
+                  <div className="text-xs font-bold text-black/60">{new Date(m.moved_at).toLocaleString()}</div>
+                </div>
+                <div className="mt-1 text-xs font-bold text-black/70">Moved by: {m.moved_by}</div>
+                {m.note ? <div className="mt-2 text-sm font-semibold text-black/80">{m.note}</div> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <MoveDealModal
+        open={openMove}
+        dealId={deal.id}
+        currentStage={currentStage}
+        onClose={() => setOpenMove(false)}
+        onMoved={load}
+      />
+    </div>
+  );
+}

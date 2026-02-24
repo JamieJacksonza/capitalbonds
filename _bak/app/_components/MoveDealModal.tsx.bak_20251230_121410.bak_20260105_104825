@@ -1,0 +1,333 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type Stage = "submitted" | "aip" | "instructed" | "granted" | "ntu" | "registrations";
+
+const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu"];
+
+const stageTitle: Record<Stage, string> = {
+  submitted: "Submitted",
+  aip: "AIP",
+  instructed: "Instructed",
+  granted: "Granted",
+  ntu: "NTU",
+};
+
+function cls(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function getLoggedInNameSafe() {
+  try {
+    return localStorage.getItem("cb_user") || "System";
+  } catch {
+    return "System";
+  }
+}
+
+type Bank = { id: string; bank_name: string };
+type StageNote = {
+  deal_bank_id: string;
+  stage: string;
+  note: string | null;
+  attorney_name?: string | null;
+  attorney_firm?: string | null;
+  attorney_note?: string | null;
+};
+
+export default function MoveDealModal(props: {
+  open: boolean;
+  dealId: string;
+  currentStage: Stage;
+  defaultToStage?: Stage;
+  onClose: () => void;
+  onMoved?: () => void;
+}) {
+  const { open, dealId, currentStage, defaultToStage, onClose, onMoved } = props;
+
+  const [toStage, setToStage] = useState<Stage>(defaultToStage || "aip");
+  const [generalNote, setGeneralNote] = useState("");
+
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [stageNotes, setStageNotes] = useState<StageNote[]>([]);
+  const [bankNote, setBankNote] = useState<Record<string, string>>({});
+  const [attorneyName, setAttorneyName] = useState<Record<string, string>>({});
+  const [attorneyFirm, setAttorneyFirm] = useState<Record<string, string>>({});
+  const [attorneyNote, setAttorneyNote] = useState<Record<string, string>>({});
+
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const needsAttorney = useMemo(() => toStage === "instructed" || toStage === "granted", [toStage]);
+
+  function getExisting(bankId: string, stage: Stage) {
+    const hit = stageNotes.find(
+      (n) => n.deal_bank_id === bankId && String(n.stage || "").toLowerCase() === stage
+    );
+    return {
+      note: hit?.note || "",
+      attorney_name: hit?.attorney_name || "",
+      attorney_firm: hit?.attorney_firm || "",
+      attorney_note: hit?.attorney_note || "",
+    };
+  }
+
+  useEffect(() => {
+    if (!open) return;
+
+    const initTo = defaultToStage || (currentStage === "submitted" ? "aip" :
+      currentStage === "aip" ? "instructed" :
+      currentStage === "instructed" ? "granted" :
+      currentStage === "granted" ? "ntu" : "submitted");
+
+    setToStage(initTo);
+    setGeneralNote("");
+    setMsg(null);
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) throw new Error(data?.error || `Failed to load deal (${res.status})`);
+
+        const b: Bank[] = data?.banks || [];
+        const sn: StageNote[] = data?.stageNotes || [];
+
+        setBanks(b);
+        setStageNotes(sn);
+
+        const bn: any = {};
+        const an: any = {};
+        const af: any = {};
+        const at: any = {};
+
+        for (const bb of b) {
+          const ex = getExisting(bb.id, initTo);
+          bn[bb.id] = ex.note;
+          an[bb.id] = ex.attorney_name;
+          af[bb.id] = ex.attorney_firm;
+          at[bb.id] = ex.attorney_note;
+        }
+
+        setBankNote(bn);
+        setAttorneyName(an);
+        setAttorneyFirm(af);
+        setAttorneyNote(at);
+      } catch (e: any) {
+        setMsg({ type: "err", text: e?.message || "Failed to load deal details" });
+      }
+    })();
+  }, [open, dealId, currentStage, defaultToStage]);
+
+  function validate() {
+    if (!needsAttorney) return true;
+
+    // require some attorney info per bank for instructed/granted
+    for (const b of banks) {
+      const aN = String(attorneyName[b.id] || "").trim();
+      const aF = String(attorneyFirm[b.id] || "").trim();
+      const aT = String(attorneyNote[b.id] || "").trim();
+      if (!aN && !aF && !aT) {
+        setMsg({ type: "err", text: `Attorney info is required for ${b.bank_name} when moving to ${stageTitle[toStage]}.` });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async function confirm() {
+    if (!validate()) return;
+
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      const movedBy = getLoggedInNameSafe().trim() || "System";
+
+      const payload = {
+        toStage,
+        movedBy,
+        note: generalNote.trim(),
+        bankNotes: banks.map((b) => ({
+          bankId: b.id,
+          note: String(bankNote[b.id] || "").trim(),
+          attorneyName: needsAttorney ? String(attorneyName[b.id] || "").trim() : "",
+          attorneyFirm: needsAttorney ? String(attorneyFirm[b.id] || "").trim() : "",
+          attorneyNote: needsAttorney ? String(attorneyNote[b.id] || "").trim() : "",
+        })),
+      };
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || `Failed to move (${res.status})`);
+
+      setMsg({ type: "ok", text: `Moved to ${stageTitle[toStage]} (by ${movedBy})` });
+
+      setTimeout(() => {
+        onClose();
+        onMoved?.();
+      }, 350);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Failed to move" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-3xl rounded-2xl border border-black/10 bg-white p-6 shadow-lg">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-extrabold text-black/60">Move deal</div>
+            <div className="mt-1 text-xl font-extrabold text-black">Add notes per bank</div>
+            <div className="mt-1 text-sm font-semibold text-black/70">
+              Attorney info appears only for Instructed + Granted.
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:bg-black/[0.03]"
+          >
+            Close
+          </button>
+        </div>
+
+        {msg ? (
+          <div className={cls(
+            "mt-4 rounded-2xl border p-3 text-sm font-extrabold",
+            msg.type === "ok" ? "border-black/10 bg-black/[0.03] text-black" : "border-red-200 bg-red-50 text-red-700"
+          )}>
+            {msg.text}
+          </div>
+        ) : null}
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="text-xs font-extrabold text-black">Move to stage</div>
+            <select
+              value={toStage}
+              onChange={(e) => {
+                const ns = e.target.value as Stage;
+                setToStage(ns);
+
+                // load existing notes for that stage into inputs
+                const bn: any = {};
+                const an: any = {};
+                const af: any = {};
+                const at: any = {};
+                for (const b of banks) {
+                  const ex = getExisting(b.id, ns);
+                  bn[b.id] = ex.note;
+                  an[b.id] = ex.attorney_name;
+                  af[b.id] = ex.attorney_firm;
+                  at[b.id] = ex.attorney_note;
+                }
+                setBankNote(bn); setAttorneyName(an); setAttorneyFirm(af); setAttorneyNote(at);
+              }}
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-extrabold text-black outline-none focus:border-black/30"
+            >
+              {STAGES.filter((x) => x !== currentStage).map((x) => (
+                <option key={x} value={x}>{stageTitle[x]}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black">General move note (optional)</div>
+            <textarea
+              value={generalNote}
+              onChange={(e) => setGeneralNote(e.target.value)}
+              className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+              placeholder="Overall note for this move..."
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          {banks.length === 0 ? (
+            <div className="rounded-2xl border border-black/10 bg-white p-4 text-sm font-semibold text-black/60">
+              No banks found for this deal.
+            </div>
+          ) : (
+            banks.map((b) => (
+              <div key={b.id} className="rounded-2xl border border-black/10 bg-white p-4">
+                <div className="text-sm font-extrabold text-black">{b.bank_name}</div>
+
+                <div className="mt-3">
+                  <div className="text-xs font-extrabold text-black">Bank notes ({stageTitle[toStage]})</div>
+                  <textarea
+                    value={bankNote[b.id] ?? ""}
+                    onChange={(e) => setBankNote((p) => ({ ...p, [b.id]: e.target.value }))}
+                    className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                    placeholder="Bank notes..."
+                  />
+                </div>
+
+                {needsAttorney ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="text-xs font-extrabold text-black">Attorney name</div>
+                        <input
+                          value={attorneyName[b.id] ?? ""}
+                          onChange={(e) => setAttorneyName((p) => ({ ...p, [b.id]: e.target.value }))}
+                          className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          placeholder="e.g. John Doe"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-xs font-extrabold text-black">Firm</div>
+                        <input
+                          value={attorneyFirm[b.id] ?? ""}
+                          onChange={(e) => setAttorneyFirm((p) => ({ ...p, [b.id]: e.target.value }))}
+                          className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                          placeholder="e.g. Smith & Partners"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-extrabold text-black">Attorney notes</div>
+                      <textarea
+                        value={attorneyNote[b.id] ?? ""}
+                        onChange={(e) => setAttorneyNote((p) => ({ ...p, [b.id]: e.target.value }))}
+                        className="mt-2 min-h-[90px] w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+                        placeholder="Attorney notes..."
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="rounded-2xl border border-black/10 bg-white px-5 py-3 text-sm font-extrabold text-black hover:border-black/20"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={saving}
+            onClick={confirm}
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {saving ? "Saving..." : "Confirm Move  MARKER"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

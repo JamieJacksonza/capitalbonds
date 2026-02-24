@@ -1,0 +1,181 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+type ApiOk = { ok: true; record: { id: string } & Record<string, any> };
+type ApiErr = { ok: false; error: string };
+type ApiResponse = ApiOk | ApiErr;
+
+export default function NewSubmissionPage() {
+  const [applicant, setApplicant] = useState("");
+  const [bank, setBank] = useState("");
+  const [amount, setAmount] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const amountNumber = useMemo(() => Number(amount), [amount]);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+
+    const a = applicant.trim();
+    const b = bank.trim();
+    const n = notes.trim();
+
+    if (!a) return setMsg({ type: "err", text: "Applicant is required." });
+    if (!b) return setMsg({ type: "err", text: "Bank is required." });
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return setMsg({ type: "err", text: "Amount must be a valid number." });
+    }
+
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicant: a, bank: b, amount: amountNumber, notes: n }),
+      });
+
+      const data = (await res.json()) as ApiResponse;
+
+      if (!res.ok || !data.ok) {
+        const errMsg =
+          (data as ApiErr)?.error || "Request failed (" + String(res.status) + ")";
+        setMsg({ type: "err", text: errMsg });
+        return;
+      }
+
+      setMsg({
+        type: "ok",
+        text: "Saved ✅ " + data.record.id + " added to Google Sheets.",
+      });
+
+      setApplicant("");
+      setBank("");
+      setAmount("");
+      setNotes("");
+    } catch {
+      setMsg({ type: "err", text: "Network error. Try again." });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <Link
+            href="/submitted"
+            className="text-sm font-extrabold text-black/80 hover:text-black"
+          >
+            ← Back to Submitted
+          </Link>
+
+          <h1 className="mt-2 text-3xl font-extrabold tracking-tight">
+            New Submission
+          </h1>
+
+          <p className="mt-2 text-sm text-black/80">
+            Creates a new submission and writes it into your Google Sheet.
+          </p>
+        </div>
+      </header>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
+        {msg && (
+          <div
+            className={
+              "mb-4 rounded-2xl border p-4 text-sm font-bold " +
+              (msg.type === "ok"
+                ? "border-black/10 bg-black/[0.03] text-black"
+                : "border-black/20 bg-black/[0.02] text-black")
+            }
+          >
+            {msg.text}
+          </div>
+        )}
+
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Applicant" required>
+              <input
+                value={applicant}
+                onChange={(e) => setApplicant(e.target.value)}
+                placeholder="e.g. A. Jacobs"
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-black/30"
+              />
+            </Field>
+
+            <Field label="Bank" required>
+              <input
+                value={bank}
+                onChange={(e) => setBank(e.target.value)}
+                placeholder="e.g. FNB"
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-black/30"
+              />
+            </Field>
+          </div>
+
+          <Field label="Amount (ZAR)" required>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="e.g. 1450000"
+              className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-black/30"
+            />
+          </Field>
+
+          <Field label="Notes (optional)">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any quick notes..."
+              rows={4}
+              className="w-full resize-none rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-black/30"
+            />
+          </Field>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-2">
+            <div className="text-xs text-black/80">
+              Submits to <span className="font-bold">/api/submissions</span>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className={
+                "rounded-2xl px-4 py-3 text-sm font-extrabold text-white " +
+                (loading ? "bg-black/50" : "bg-black hover:opacity-90")
+              }
+            >
+              {loading ? "Saving..." : "Save submission"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function Field(props: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <div className="mb-2 text-xs font-extrabold text-black/80">
+        {props.label} {props.required ? <span className="text-black/70">*</span> : null}
+      </div>
+      {props.children}
+    </label>
+  );
+}
+

@@ -1,0 +1,47 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+function supa() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  if (!url || !key) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const stage = (searchParams.get("stage") || "").trim().toLowerCase();
+    const q = (searchParams.get("q") || "").trim();
+
+    const sb = supa();
+
+    let query = sb
+      .from("deals")
+      .select("*", { count: "exact" });
+
+    if (stage) query = query.eq("stage", stage);
+
+    // safest search: deal_code only (won't blow up on unknown columns)
+    if (q) query = query.ilike("deal_code", "%" + q + "%");
+
+    // stable ordering: id desc (id exists)
+    query = query.order("id", { ascending: false });
+
+    const { data, error, count } = await query;
+
+    if (error) throw error;
+
+    return NextResponse.json({
+      ok: true,
+      count: count ?? (data?.length ?? 0),
+      deals: data ?? [],
+      items: data ?? [],
+      api_build: "deals_list_v2"
+    });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Failed", api_build: "deals_list_v2" }, { status: 500 });
+  }
+}

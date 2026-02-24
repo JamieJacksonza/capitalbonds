@@ -1,0 +1,255 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+function asArray(v: any): any[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function getTarget(req: Request, params?: { id?: string }) {
+  const url = new URL(req.url);
+  const fromParams = String(params?.id ?? "").trim();
+  const fromQuery = String(url.searchParams.get("id") ?? url.searchParams.get("code") ?? "").trim();
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  const last = String(parts[parts.length - 1] ?? "").trim();
+
+  const candidate = fromParams || fromQuery || last;
+  if (!candidate || candidate.toLowerCase() === "deals") return "";
+  return candidate;
+}
+
+async function findDeal(sb: ReturnType<typeof admin>, target: string) {
+  const t = String(target || "").trim();
+  if (!t) return { deal: null as any, error: "Missing id" };
+
+  const q = sb.from("deals").select("*").limit(1);
+  const res = isUuid(t) ? await q.eq("id", t) : await q.eq("deal_code", t);
+
+  if (res.error) return { deal: null as any, error: res.error.message };
+  const deal = res.data?.[0] ?? null;
+  if (!deal) return { deal: null as any, error: "Deal not found" };
+  return { deal, error: null as any };
+}
+
+function bankKey(b: any) {
+  const id = b?.bank_id ?? b?.id ?? null;
+  const name = b?.bank_name ?? b?.bank ?? b?.name ?? null;
+  return String(id ?? name ?? "").trim().toLowerCase();
+}
+
+function mergeAipBankDetails(existing: any[], incoming: any[], now: string, by: any) {
+  const map = new Map<string, any>();
+
+  for (const e of asArray(existing)) {
+    const k = bankKey(e);
+    if (k) map.set(k, e);
+  }
+
+  for (const i of asArray(incoming)) {
+    const k = bankKey(i);
+    if (!k) continue;
+
+    const prev = map.get(k) ?? {};
+    const next = {
+      ...prev,
+      bank_id: i?.bank_id ?? prev?.bank_id ?? null,
+      bank_name: i?.bank_name ?? prev?.bank_name ?? null,
+
+      status: i?.status ?? prev?.status ?? null,
+      reference: i?.reference ?? prev?.reference ?? null,
+      amount: i?.amount ?? prev?.amount ?? null,
+      rate: i?.rate ?? prev?.rate ?? null,
+      term: i?.term ?? prev?.term ?? null,
+
+      note_latest: i?.note ?? prev?.note_latest ?? null,
+
+      updated_at: now,
+      updated_by: by ?? null,
+    };
+
+    map.set(k, next);
+  }
+
+  return Array.from(map.values());
+}
+
+async function safeUpdateDeal(sb: ReturnType<typeof admin>, dealId: string, update: Record<string, any>) {
+  let u = { ...update };
+  const stripped: string[] = [];
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const res = await sb.from("deals").update(u).eq("id", dealId).select("*").limit(1);
+    if (!res.error) return { updated: res.data?.[0] ?? null, stripped, error: null as any };
+
+    const msg = res.error.message || "";
+    const m = msg.match(/column "([^"]+)" of relation "deals" does not exist/i);
+    if (!m) return { updated: null, stripped, error: msg };
+
+    const col = m[1];
+    if (u[col] === undefined) return { updated: null, stripped, error: msg };
+
+    delete u[col];
+    stripped.push(col);
+  }
+
+  return { updated: null, stripped, error: "Update failed after retries" };
+}
+
+export async function GET(req: Request, ctx: { params: { id: string } }) {
+  const sb = admin();
+  const target = getTarget(req, ctx?.params);
+  const { deal, error } = await findDeal(sb, target);
+
+  if (error) return NextResponse.json({ ok: false, error }, { status: error === "Missing id" ? 400 : 404 });
+  return NextResponse.json({ ok: true, deal, data: deal });
+}
+
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  const sb = admin();
+
+  const target = getTarget(req, ctx?.params);
+  const { deal, error } = await findDeal(sb, target);
+  if (error) return NextResponse.json({ ok: false, error }, { status: error === "Missing id" ? 400 : 404 });
+
+  const body = await req.json().catch(() => ({} as any));
+  const now = new Date().toISOString();
+
+  const nextStage = normalizeStage(body?.toStage ?? body?.stage);
+  const movedBy = String(body?.movedBy ?? body?.moved_by ?? body?.user ?? "").trim() || null;
+
+  const stageForNotes = normalizeStage(body?.stageForNotes ?? body?.notesStage ?? (nextStage || deal.stage));
+  const stageNotes = String(body?.stageNotes ?? body?.note ?? "").trim();
+
+  const aipBankDetailsIncoming = Array.isArray(body?.aipBankDetails) ? body.aipBankDetails : [];
+
+  const update: Record<string, any> = {};
+
+  // Keep it safe: allowlist known columns only
+  const allow = new Set([
+    "notes",
+    "stage",
+    "last_moved_at",
+    "last_moved_by",
+    "move_history",
+    "notes_history",
+
+    // existing registration fields (keep)
+    "registration_number",
+    "registration_attorney",
+    "registration_attorney_tel",
+    "agent_comm_paid",
+    "payment_due_date",
+
+    // AIP (new)
+    "aip_bank_details",
+    "aip_bank_notes_history",
+    "aip_notes_history",
+  ]);
+
+  // Stage move history
+  const moveHistory = asArray(deal.move_history);
+  if (nextStage && String(nextStage) !== String(deal.stage ?? "")) {
+    moveHistory.push({
+      at: now,
+      by: movedBy,
+      from: deal.stage ?? null,
+      to: nextStage,
+      note: stageNotes || null,
+    });
+
+    update.stage = nextStage;
+    update.last_moved_at = now;
+    update.last_moved_by = movedBy;
+    update.move_history = moveHistory;
+  }
+
+  // Global timestamped notes history
+  if (stageNotes) {
+    const notesHistory = asArray(deal.notes_history);
+    notesHistory.push({
+      at: now,
+      by: movedBy,
+      stage: stageForNotes || deal.stage || null,
+      note: stageNotes,
+    });
+
+    update.notes = stageNotes;
+    update.notes_history = notesHistory;
+
+    // AIP timestamped notes
+    if (stageForNotes === "aip") {
+      const aipNotes = asArray(deal.aip_notes_history);
+      aipNotes.push({ at: now, by: movedBy, note: stageNotes });
+      update.aip_notes_history = aipNotes;
+    }
+  }
+
+  // AIP bank details + per-bank timestamp notes
+  if (stageForNotes === "aip" && aipBankDetailsIncoming.length > 0) {
+    const merged = mergeAipBankDetails(asArray(deal.aip_bank_details), aipBankDetailsIncoming, now, movedBy);
+    update.aip_bank_details = merged;
+
+    const aipBankNotesHist = asArray(deal.aip_bank_notes_history);
+    for (const bn of aipBankDetailsIncoming) {
+      const note = String(bn?.note ?? "").trim();
+      if (!note) continue;
+
+      aipBankNotesHist.push({
+        at: now,
+        by: movedBy,
+        bank_id: bn?.bank_id ?? bn?.id ?? null,
+        bank_name: bn?.bank_name ?? bn?.bank ?? bn?.name ?? null,
+        note,
+      });
+    }
+    update.aip_bank_notes_history = aipBankNotesHist;
+  }
+
+  // Apply any allowed direct fields if you ever send them
+  Object.keys(body || {}).forEach((k) => {
+    if (allow.has(k) && update[k] === undefined) update[k] = body[k];
+  });
+
+  const { updated, stripped, error: upErr } = await safeUpdateDeal(sb, deal.id, update);
+  if (upErr) return NextResponse.json({ ok: false, error: upErr }, { status: 500 });
+
+  return NextResponse.json({
+    ok: true,
+    deal: updated,
+    data: updated,
+    warning: stripped.length ? `Ignored missing columns: ${stripped.join(", ")}` : null,
+  });
+}

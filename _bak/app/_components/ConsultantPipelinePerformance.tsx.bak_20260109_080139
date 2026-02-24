@@ -1,0 +1,242 @@
+"use client";
+
+import { useMemo } from "react";
+
+function moneyZar(n: number) {
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(Math.round(Number(n || 0)));
+}
+
+function toNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function dealAmount(d: any) {
+  return toNumber(d?.amount_zar ?? d?.amount ?? 0);
+}
+
+function pickConsultant(d: any): string {
+  const c = String(d?.consultant ?? "").trim();
+  return c || "Unassigned";
+}
+
+const STAGES = ["submitted", "aip", "instructed", "granted", "ntu", "registrations"] as const;
+type Stage = typeof STAGES[number];
+
+// Weighted pipeline score (tweak anytime)
+// Higher stages count more. NTU lightly penalizes.
+const WEIGHTS: Record<Stage, number> = {
+  submitted: 0.20,
+  aip: 0.40,
+  instructed: 0.60,
+  granted: 1.00,
+  registrations: 1.20,
+  ntu: -0.15,
+};
+
+type Row = {
+  name: string;
+  score: number;
+  totalValue: number;
+  totalCount: number;
+  lateValue: number;
+  lateCount: number;
+  stageCounts: Record<Stage, number>;
+  stageValues: Record<Stage, number>;
+};
+
+function fmtRange(from?: string, to?: string) {
+  const f = String(from || "").trim();
+  const t = String(to || "").trim();
+  if (f && t) return `${f} to ${t}`;
+  if (f && !t) return `from ${f}`;
+  if (!f && t) return `up to ${t}`;
+  return "all dates";
+}
+
+export default function ConsultantPipelinePerformance(props: { deals: any[]; from?: string; to?: string }) {
+  const deals = Array.isArray(props.deals) ? props.deals : [];
+
+  const rows = useMemo<Row[]>(() => {
+    const map = new Map<string, Row>();
+
+    for (const d of deals) {
+      const name = pickConsultant(d);
+      const stageRaw = String(d?.stage || "").toLowerCase();
+      const stage = (STAGES as readonly string[]).includes(stageRaw) ? (stageRaw as Stage) : "submitted";
+      const amt = dealAmount(d);
+
+      const cur =
+        map.get(name) ||
+        ({
+          name,
+          score: 0,
+          totalValue: 0,
+          totalCount: 0,
+          lateValue: 0,
+          lateCount: 0,
+          stageCounts: {
+            submitted: 0,
+            aip: 0,
+            instructed: 0,
+            granted: 0,
+            ntu: 0,
+            registrations: 0,
+          },
+          stageValues: {
+            submitted: 0,
+            aip: 0,
+            instructed: 0,
+            granted: 0,
+            ntu: 0,
+            registrations: 0,
+          },
+        } as Row);
+
+      cur.totalCount += 1;
+      cur.totalValue += amt;
+      cur.stageCounts[stage] += 1;
+      cur.stageValues[stage] += amt;
+
+      if (stage === "granted" || stage === "registrations") {
+        cur.lateCount += 1;
+        cur.lateValue += amt;
+      }
+
+      // score: stage-weighted value + small boost for deal volume
+      cur.score += amt * (WEIGHTS[stage] ?? 0);
+      cur.score += 2500; // tiny constant per deal so volume matters a bit
+
+      map.set(name, cur);
+    }
+
+    return Array.from(map.values()).sort(
+      (a, b) =>
+        (b.score - a.score) ||
+        (b.lateValue - a.lateValue) ||
+        (b.totalValue - a.totalValue) ||
+        (b.totalCount - a.totalCount) ||
+        a.name.localeCompare(b.name)
+    );
+  }, [deals]);
+
+  const top = rows[0] || null;
+
+  const bestRegistrations = useMemo(() => {
+    if (rows.length === 0) return null;
+    return [...rows].sort((a, b) => (b.stageValues.registrations - a.stageValues.registrations) || a.name.localeCompare(b.name))[0];
+  }, [rows]);
+
+  const bestGranted = useMemo(() => {
+    if (rows.length === 0) return null;
+    return [...rows].sort((a, b) => (b.stageValues.granted - a.stageValues.granted) || a.name.localeCompare(b.name))[0];
+  }, [rows]);
+
+  const rangeLabel = fmtRange(props.from, props.to);
+
+  return (
+    <div className="mt-10 rounded-2xl border border-black/10 bg-white p-8 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-lg font-extrabold text-black">Consultant Pipeline Performance</div>
+          <div className="mt-1 text-xs font-semibold text-black/60">
+            Overall ranking based on current pipeline (weighted by stage + value)  {rangeLabel}
+          </div>
+        </div>
+        <div className="text-[11px] font-extrabold text-black/60">
+          Score favors later stages: Registrations &gt; Granted &gt; Instructed &gt; AIP &gt; Submitted (NTU penalizes)
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 text-sm font-semibold text-black/70">No consultant data in this date range yet.</div>
+      ) : (
+        <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-2">
+          {/* Summary */}
+          <div className="rounded-2xl border border-black/10 bg-white p-6">
+            <div className="text-xs font-extrabold text-black/60">Auto summary</div>
+
+            {top ? (
+              <div className="mt-4 space-y-3">
+                <div className="text-sm font-extrabold text-black">
+                  #1 Overall: <span className="underline decoration-black/20">{top.name}</span>
+                </div>
+
+                <div className="text-xs font-semibold text-black/70 leading-relaxed">
+                  Pipeline total: <span className="font-extrabold text-black">{moneyZar(top.totalValue)}</span> across{" "}
+                  <span className="font-extrabold text-black">{top.totalCount}</span> deal(s). Late-stage (Granted + Registrations):{" "}
+                  <span className="font-extrabold text-black">{moneyZar(top.lateValue)}</span> across{" "}
+                  <span className="font-extrabold text-black">{top.lateCount}</span> deal(s).
+                </div>
+
+                <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+                  <div className="text-[11px] font-extrabold text-black/60">Stage mix (count)</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] font-semibold text-black">
+                    <div>Submitted: <span className="font-extrabold">{top.stageCounts.submitted}</span></div>
+                    <div>AIP: <span className="font-extrabold">{top.stageCounts.aip}</span></div>
+                    <div>Instructed: <span className="font-extrabold">{top.stageCounts.instructed}</span></div>
+                    <div>Granted: <span className="font-extrabold">{top.stageCounts.granted}</span></div>
+                    <div>Registrations: <span className="font-extrabold">{top.stageCounts.registrations}</span></div>
+                    <div>NTU: <span className="font-extrabold">{top.stageCounts.ntu}</span></div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] font-semibold text-black/60">
+                  Standouts:{" "}
+                  <span className="font-extrabold text-black">{bestRegistrations?.name ?? ""}</span> leads registrations value,{" "}
+                  <span className="font-extrabold text-black">{bestGranted?.name ?? ""}</span> leads granted value.
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Rankings table */}
+          <div className="rounded-2xl border border-black/10 bg-white p-6">
+            <div className="text-xs font-extrabold text-black/60">Overall ranking</div>
+
+            <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
+              <table className="w-full text-left">
+                <thead className="bg-black/[0.02]">
+                  <tr className="text-[11px] font-extrabold text-black">
+                    <th className="px-4 py-3">Consultant</th>
+                    <th className="px-4 py-3">Deals</th>
+                    <th className="px-4 py-3 text-right">Pipeline</th>
+                    <th className="px-4 py-3 text-right">Late-stage</th>
+                    <th className="px-4 py-3 text-right">Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 12).map((r) => (
+                    <tr key={r.name} className="border-t border-black/10 hover:bg-black/[0.02]">
+                      <td className="px-4 py-3 text-[12px] font-semibold text-black">
+                        <span className="truncate">{r.name}</span>
+                      </td>
+                      <td className="px-4 py-3 text-[12px] font-extrabold text-black">{r.totalCount}</td>
+                      <td className="px-4 py-3 text-right text-[12px] font-extrabold text-black whitespace-nowrap">
+                        {moneyZar(r.totalValue)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[12px] font-extrabold text-black whitespace-nowrap">
+                        {moneyZar(r.lateValue)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[12px] font-extrabold text-black whitespace-nowrap">
+                        {Math.round(r.score).toLocaleString("en-ZA")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 text-[10px] font-semibold text-black/50">
+              Tip: If you want best to mean something else (conversion rate, fastest movement, etc.) we just tweak the WEIGHTS + formula.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

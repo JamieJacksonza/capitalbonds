@@ -1,0 +1,157 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "submitted";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+export default function DealMovePanel() {
+  const router = useRouter();
+  const params = useParams() as any;
+  const sp = useSearchParams();
+
+  const target = useMemo(() => {
+    const pId = params?.id ? String(params.id) : "";
+    const pCode = params?.code ? String(params.code) : "";
+    const qCode = sp?.get("code") ? String(sp.get("code")) : "";
+    return (pCode || qCode || pId || "").trim();
+  }, [params, sp]);
+
+  const [open, setOpen] = useState(false);
+  const [nextStage, setNextStage] = useState("aip");
+  const [note, setNote] = useState("");
+  const [movedBy, setMovedBy] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Try to auto-fill movedBy once
+  useMemo(() => {
+    try {
+      const v =
+        (typeof window !== "undefined" && (localStorage.getItem("cb_user") || localStorage.getItem("user") || localStorage.getItem("name"))) ||
+        "";
+      if (v && !movedBy) setMovedBy(v);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stageToRoute(stage: any) {
+    const s = normalizeStage(stage);
+    return "/" + encodeURIComponent(s);
+  }
+
+  async function doMove() {
+    if (!target) {
+      setErr("Could not detect deal id/code from the URL.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    const stage = normalizeStage(nextStage);
+
+    try {
+      const res = await fetch(/api/deals/, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          stage,
+          note: note?.trim() ? note.trim() : null,
+          movedBy: movedBy?.trim() ? movedBy.trim() : null,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || "Move failed");
+      }
+
+      // go to the stage page you moved it to
+      router.push(stageToRoute(stage));
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message || "Move failed");
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-black">Move this deal ✅ MARKER</div>
+          <div className="text-xs font-semibold text-black/60">
+            Deal ref: <span className="font-extrabold text-black">{target || ""}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm"
+        >
+          {open ? "Close" : "Move"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 grid gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={nextStage}
+              onChange={(e) => setNextStage(e.target.value)}
+              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black outline-none"
+            >
+              <option value="submitted">Submitted</option>
+              <option value="aip">AIP</option>
+              <option value="instructed">Instructed</option>
+              <option value="granted">Granted</option>
+              <option value="ntu">NTU</option>
+              <option value="registrations">Registrations</option>
+            </select>
+
+            <input
+              value={movedBy}
+              onChange={(e) => setMovedBy(e.target.value)}
+              placeholder="Moved by (optional)"
+              className="min-w-[220px] flex-1 rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+            />
+          </div>
+
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add a note (this will carry with the move ✅ MARKER)"
+            rows={3}
+            className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={doMove}
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-60"
+            >
+              {busy ? "Moving..." : "Confirm Move ✅ MARKER"}
+            </button>
+
+            {err && <div className="text-sm font-semibold text-red-600">{err}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// deal_move_panel_v2

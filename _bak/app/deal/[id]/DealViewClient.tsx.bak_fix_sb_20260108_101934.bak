@@ -1,0 +1,393 @@
+﻿"use client";
+
+import React from "react";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+type DealRow = Record<string, any>;
+type ActivityRow = {
+  id?: string;
+  deal_id?: string;
+  deal_code?: string;
+  from_stage?: string | null;
+  to_stage?: string | null;
+  actor?: string | null;
+  moved_by?: string | null;
+  action?: string | null;
+  note?: string | null;
+  moved_at?: string | null;
+  created_at?: string | null;
+};
+
+const sb = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+);
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function safeDecode(v: string) {
+  try { return decodeURIComponent(v); } catch { return v; }
+}
+
+function fmtZar(v: any) {
+  const n = Number(v);
+  if (!isFinite(n)) return "";
+  try {
+    return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return `R${Math.round(n).toLocaleString("en-ZA")}`;
+  }
+}
+
+function fmtDate(v: any) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (isNaN(d.getTime())) return String(v);
+  return new Intl.DateTimeFormat("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+}
+
+function fmtDateTime(v: any) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (isNaN(d.getTime())) return String(v);
+  return new Intl.DateTimeFormat("en-ZA", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }).format(d);
+}
+
+function pill(label: string) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-800">
+      {label}
+    </span>
+  );
+}
+
+function Field({ label, value }: { label: string; value: any }) {
+  const v =
+    value === null || value === undefined || value === ""
+      ? ""
+      : typeof value === "string"
+      ? value
+      : typeof value === "number"
+      ? String(value)
+      : JSON.stringify(value);
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-zinc-900 break-words">{v}</div>
+    </div>
+  );
+}
+
+function CopyBtn({ value }: { value: string }) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+
+  return (
+    <button
+      onClick={onCopy}
+      className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+      type="button"
+      aria-label="Copy"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+export default function DealViewClient({ dealKey }: { dealKey?: string }) {
+  const params = useParams<any>();
+  const searchParams = useSearchParams();
+
+  const resolvedKey = React.useMemo(() => {
+    const fromProp = (dealKey || "").toString();
+    const routeRaw = params?.id;
+    const fromRoute = Array.isArray(routeRaw) ? routeRaw[0] : (routeRaw || "").toString();
+
+    const fromQuery =
+      searchParams.get("id") ||
+      searchParams.get("dealId") ||
+      searchParams.get("code") ||
+      searchParams.get("deal_code") ||
+      "";
+
+    const k = safeDecode((fromProp || fromRoute || fromQuery || "").toString()).trim();
+    if (!k || k === "undefined" || k === "null") return "";
+    return k;
+  }, [dealKey, params, searchParams]);
+
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [deal, setDeal] = React.useState<DealRow | null>(null);
+
+  const [activity, setActivity] = React.useState<ActivityRow[]>([]);
+  const [loadingActivity, setLoadingActivity] = React.useState(false);
+
+  React.useEffect(() => {
+    let ignore = false;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setErr(null);
+
+        if (!resolvedKey) {
+          setDeal(null);
+          setErr("Missing deal id");
+          return;
+        }
+
+        if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+          setErr("Supabase env vars missing (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+          return;
+        }
+
+        let r: any;
+        if (isUuid(resolvedKey)) {
+          r = await sb.from("deals").select("*").eq("id", resolvedKey).maybeSingle();
+        } else {
+          r = await sb.from("deals").select("*").eq("deal_code", resolvedKey).maybeSingle();
+        }
+
+        if (r?.error) throw r.error;
+        if (!r?.data) {
+          setDeal(null);
+          setErr("Deal not found");
+          return;
+        }
+
+        if (!ignore) setDeal(r.data);
+      } catch (e: any) {
+        if (!ignore) setErr(e?.message || "Failed to load deal");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+
+    run();
+    return () => { ignore = true; };
+  }, [resolvedKey]);
+
+  React.useEffect(() => {
+    let ignore = false;
+
+    async function run() {
+      if (!deal?.id) return;
+
+      try {
+        setLoadingActivity(true);
+
+        const r = await sb
+          .from("deal_activity")
+          .select("id, deal_id, deal_code, from_stage, to_stage, actor, moved_by, action, note, moved_at, created_at")
+          .eq("deal_id", deal.id)
+          .order("moved_at", { ascending: false })
+          .limit(50);
+
+        if (r.error) throw r.error;
+        if (!ignore) setActivity(Array.isArray(r.data) ? (r.data as any) : []);
+      } catch {
+        if (!ignore) setActivity([]);
+      } finally {
+        if (!ignore) setLoadingActivity(false);
+      }
+    }
+
+    run();
+    return () => { ignore = true; };
+  }, [deal?.id]);
+
+  const top = React.useMemo(() => {
+    if (!deal) return null;
+    const code = deal.deal_code || deal.id || "";
+    const stage = deal.stage || "";
+    const amount = fmtZar(deal.amount_zar);
+    const applicant = deal.applicant || "";
+    const consultant = deal.consultant || deal.agent_name || "";
+    const submitted = deal.submitted_date ? fmtDate(deal.submitted_date) : "";
+    return { code, stage, amount, applicant, consultant, submitted };
+  }, [deal]);
+
+  const copyTargets = React.useMemo(() => {
+    if (!deal) return null;
+    return {
+      code: String(deal.deal_code || ""),
+      email: String(deal.applicant_email || ""),
+      cell: String(deal.applicant_cell || ""),
+      address: String(deal.property_address || ""),
+    };
+  }, [deal]);
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+          >
+             Dashboard
+          </Link>
+          <div className="text-sm text-zinc-500">Deal</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {deal?.stage ? pill(String(deal.stage)) : null}
+          {deal?.bank ? pill(String(deal.bank)) : null}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+        {loading ? (
+          <div className="space-y-3">
+            <div className="h-6 w-64 rounded bg-zinc-100" />
+            <div className="h-4 w-80 rounded bg-zinc-100" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+              <div className="h-16 rounded-xl bg-zinc-100" />
+              <div className="h-16 rounded-xl bg-zinc-100" />
+              <div className="h-16 rounded-xl bg-zinc-100" />
+            </div>
+          </div>
+        ) : err ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            {err}
+            <div className="mt-2 text-xs text-rose-900/80">
+              Debug key: <span className="font-mono">{resolvedKey || "EMPTY"}</span>
+            </div>
+          </div>
+        ) : top ? (
+          <div className="space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-2xl font-bold text-zinc-900">{top.code}</div>
+                <div className="mt-1 text-sm text-zinc-600">
+                  {top.submitted}  {top.consultant}
+                </div>
+              </div>
+
+              {copyTargets ? (
+                <div className="hidden md:flex items-center gap-2">
+                  {copyTargets.code ? <CopyBtn value={copyTargets.code} /> : null}
+                  {copyTargets.email ? <CopyBtn value={copyTargets.email} /> : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Field label="Stage" value={top.stage} />
+              <Field label="Amount" value={top.amount} />
+              <Field label="Bank" value={deal?.bank} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {!loading && !err && deal ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Applicant</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Name" value={deal.applicant} />
+                <Field label="Email" value={deal.applicant_email} />
+                <Field label="Cell" value={deal.applicant_cell} />
+                <Field label="Submitted date" value={fmtDate(deal.submitted_date)} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Parties</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Consultant" value={deal.consultant} />
+                <Field label="Agent" value={deal.agent_name} />
+                <Field label="Attorney" value={deal.attorney} />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Property</div>
+              <div className="mt-4 grid grid-cols-1 gap-3">
+                <Field label="Address" value={deal.property_address} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Registration</div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Registration #" value={deal.registration_number} />
+                <Field label="Attorney" value={deal.registration_attorney} />
+                <Field label="Contact" value={deal.registration_attorney_contact} />
+                <Field label="Tel" value={deal.registration_attorney_tel} />
+                <Field label="Email" value={deal.registration_attorney_email} />
+                <Field label="Reference" value={deal.registration_attorney_reference} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-900">Notes</div>
+              <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-800 whitespace-pre-wrap">
+                {deal.notes || ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {!loading && !err && deal ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-900">Timeline</div>
+            <div className="text-xs text-zinc-500">
+              {loadingActivity ? "Loading" : `${activity.length} items`}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {loadingActivity ? (
+              <div className="h-16 rounded-xl bg-zinc-100" />
+            ) : activity.length === 0 ? (
+              <div className="text-sm text-zinc-600">No activity yet.</div>
+            ) : (
+              activity.map((a, idx) => (
+                <div key={a.id || idx} className="rounded-xl border border-zinc-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-zinc-900">
+                      {(a.actor || a.moved_by || "system").toString()}
+                      {a.from_stage || a.to_stage ? (
+                        <span className="text-zinc-500 font-medium">
+                          {" "}
+                           {String(a.from_stage || "")}  {String(a.to_stage || "")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="text-xs text-zinc-500">{fmtDateTime(a.moved_at || a.created_at)}</div>
+                  </div>
+
+                  {a.note ? (
+                    <div className="mt-2 text-sm text-zinc-700 whitespace-pre-wrap">{String(a.note)}</div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

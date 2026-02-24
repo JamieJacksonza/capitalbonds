@@ -1,0 +1,186 @@
+﻿import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ALLOWED = ["submitted","aip","instructed","granted","ntu","registrations"] as const;
+type DealStage = (typeof ALLOWED)[number];
+
+function normalizeStage(v: any): DealStage {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "iap") return "aip";
+  if (s === "registration") return "registrations";
+  if (ALLOWED.includes(s as DealStage)) return s as DealStage;
+  return "submitted";
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function isMissingTable(err: any) {
+  return String(err?.code || "") === "42P01";
+}
+
+async function getKey(ctx: any) {
+  const p = await Promise.resolve(ctx?.params);
+  return String(p?.id || "").trim();
+}
+
+function clean(v: any) {
+  const s = String(v ?? "").trim();
+  return s.length ? s : null;
+}
+
+async function fetchDealByKey(key: string) {
+  const q = supabaseAdmin.from("deals").select("*, banks:deal_banks(*)");
+  const { data, error } = isUuid(key) ? await q.eq("id", key).maybeSingle() : await q.eq("deal_code", key).maybeSingle();
+  return { data, error };
+}
+
+async function fetchBanksForDeal(dealId: string) {
+  const res = await supabaseAdmin.from("deal_banks").select("*").eq("deal_id", dealId);
+  if (res.error && isMissingTable(res.error)) return { data: [], error: null };
+  return res;
+}
+
+async function insertLegacyBankIfNeeded(deal: any, existingBanks: any[]) {
+  if ((existingBanks || []).length) return existingBanks;
+
+  const legacyBank = String(deal?.bank || "").trim();
+  if (!legacyBank) return [];
+
+  const ins = await supabaseAdmin.from("deal_banks").insert({ deal_id: deal.id, bank_name: legacyBank }).select("*");
+  if (ins.error && isMissingTable(ins.error)) return []; // table not ready, just skip
+  if (ins.error) throw ins.error;
+
+  const res2 = await fetchBanksForDeal(deal.id);
+  if (res2.error) throw res2.error;
+  return res2.data || [];
+}
+
+export async function GET(_req: Request, ctx: any) {
+  try {
+    const key = await getKey(ctx);
+    if (!key) return new Response(JSON.stringify({ ok: false, error: "Missing id" }), { status: 400 });
+
+    const { data: deal, error: dealErr } = await fetchDealByKey(key);
+    if (dealErr) return new Response(JSON.stringify({ ok: false, error: dealErr.message }), { status: 500 });
+    if (!deal) return new Response(JSON.stringify({ ok: false, error: "Deal not found" }), { status: 404 });
+
+    // Banks (safe)
+    let banks: any[] = [];
+    try {
+      const bRes = await fetchBanksForDeal(deal.id);
+      if (bRes.error) throw bRes.error;
+      banks = await insertLegacyBankIfNeeded(deal, bRes.data || []);
+    } catch (e: any) {
+      // Don't kill the whole deal view because banks table isn't ready
+      console.error("DEAL_GET_BANKS_ERROR:", e);
+      banks = [];
+    }
+
+    // Stage notes (safe)
+    let stageNotes: any[] = [];
+    try {
+      const bankIds = banks.map((b: any) => b.id).filter(Boolean);
+      if (bankIds.length) {
+        const sn = await supabaseAdmin.from("deal_bank_stage_notes").select("*").in("deal_bank_id", bankIds);
+        if (sn.error && !isMissingTable(sn.error)) throw sn.error;
+        stageNotes = sn.data || [];
+      }
+    } catch (e: any) {
+      console.error("DEAL_GET_STAGE_NOTES_ERROR:", e);
+      stageNotes = [];
+    }
+
+    // Activity (safe)
+    let activity: any[] = [];
+    try {
+      const a = await supabaseAdmin.from("deal_activity").select("*").eq("deal_id", deal.id).order("moved_at", { ascending: false });
+      if (a.error && !isMissingTable(a.error)) throw a.error;
+      activity = a.data || [];
+    } catch (e: any) {
+      console.error("DEAL_GET_ACTIVITY_ERROR:", e);
+      activity = [];
+    }
+
+    return new Response(JSON.stringify({ ok: true, deal, banks, stageNotes, activity }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("DEAL_GET_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: any) {
+  try {
+    const key = await getKey(ctx);
+    if (!key) return new Response(JSON.stringify({ ok: false, error: "Missing id" }), { status: 400 });
+
+    const body = await req.json().catch(() => ({}));
+    const toStage = normalizeStage(body?.toStage ?? body?.nextStage ?? body?.stage);
+    const movedBy = String(body?.movedBy ?? body?.by ?? body?.actor ?? "System").trim() || "System";
+    const generalNote = clean(body?.note ?? body?.generalNote);
+
+    const { data: deal, error: dealErr } = await fetchDealByKey(key);
+    if (dealErr) return new Response(JSON.stringify({ ok: false, error: dealErr.message }), { status: 500 });
+    if (!deal) return new Response(JSON.stringify({ ok: false, error: "Deal not found" }), { status: 404 });
+
+    const fromStage = normalizeStage(deal.stage);
+
+    const upd = await supabaseAdmin.from("deals").update({ stage: toStage }).eq("id", deal.id).select("*").maybeSingle();
+    if (upd.error) return new Response(JSON.stringify({ ok: false, error: upd.error.message }), { status: 500 });
+
+    // Activity log (do not break movement if activity table missing)
+    try {
+      const ins = await supabaseAdmin.from("deal_activity").insert({
+        deal_id: deal.id,
+        deal_code: deal.deal_code,
+        from_stage: fromStage,
+        to_stage: toStage,
+        moved_by: movedBy,
+        actor: movedBy,
+        note: generalNote,
+        moved_at: new Date().toISOString(),
+      });
+      if (ins.error && !isMissingTable(ins.error)) throw ins.error;
+    } catch (e: any) {
+      console.error("DEAL_PATCH_ACTIVITY_ERROR:", e);
+    }
+
+    // Per-bank stage notes (do not break movement if notes table missing)
+    try {
+      const bn = Array.isArray(body?.bankNotes) ? body.bankNotes : [];
+      if (bn.length) {
+        const rows = bn
+          .map((x: any) => ({
+            deal_bank_id: String(x?.bankId || "").trim(),
+            stage: toStage,
+            note: clean(x?.note),
+            attorney_name: clean(x?.attorneyName),
+            attorney_firm: clean(x?.attorneyFirm),
+            attorney_note: clean(x?.attorneyNote),
+          }))
+          .filter((r: any) => r.deal_bank_id);
+
+        if (rows.length) {
+          const up = await supabaseAdmin.from("deal_bank_stage_notes").upsert(rows, { onConflict: "deal_bank_id,stage" });
+          if (up.error && !isMissingTable(up.error)) throw up.error;
+        }
+      }
+    } catch (e: any) {
+      console.error("DEAL_PATCH_BANKNOTES_ERROR:", e);
+    }
+
+    return new Response(JSON.stringify({ ok: true, deal: upd.data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    console.error("DEAL_PATCH_ROUTE_ERROR:", e);
+    return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), { status: 500 });
+  }
+}

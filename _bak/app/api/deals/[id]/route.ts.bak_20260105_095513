@@ -1,0 +1,133 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+
+function asArray(v: any): any[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function getTarget(req: Request, params?: { id?: string }) {
+  const url = new URL(req.url);
+  const fromParams = String(params?.id ?? "").trim();
+  const fromQuery = String(url.searchParams.get("id") ?? url.searchParams.get("code") ?? "").trim();
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  const last = String(parts[parts.length - 1] ?? "").trim();
+
+  const candidate = fromParams || fromQuery || last;
+  if (!candidate || candidate.toLowerCase() === "deals") return "";
+  return candidate;
+}
+
+async function findDeal(sb: ReturnType<typeof admin>, target: string) {
+  const t = String(target || "").trim();
+  if (!t) return { deal: null as any, error: "Missing id" };
+
+  const q = sb.from("deals").select("*").limit(1);
+  const res = isUuid(t) ? await q.eq("id", t) : await q.eq("deal_code", t);
+
+  if (res.error) return { deal: null as any, error: res.error.message };
+  const deal = res.data?.[0] ?? null;
+  if (!deal) return { deal: null as any, error: "Deal not found" };
+  return { deal, error: null as any };
+}
+
+export async function GET(req: Request, ctx: { params?: { id?: string } }) {
+  try {
+    const sb = admin();
+    const target = getTarget(req, ctx?.params);
+    const { deal, error } = await findDeal(sb, target);
+
+    if (error) return NextResponse.json({ ok: false, error }, { status: error === "Missing id" ? 400 : 404 });
+    return NextResponse.json({ ok: true, deal });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, ctx: { params?: { id?: string } }) {
+  try {
+    const sb = admin();
+    const target = getTarget(req, ctx?.params);
+    const { deal, error } = await findDeal(sb, target);
+    if (error) return NextResponse.json({ ok: false, error }, { status: error === "Missing id" ? 400 : 404 });
+
+    const body = await req.json().catch(() => ({} as any));
+    const nextStage = normalizeStage(body?.toStage ?? body?.stage);
+    if (!nextStage) return NextResponse.json({ ok: false, error: "Missing toStage/stage" }, { status: 400 });
+
+    const movedBy = String(body?.movedBy ?? body?.moved_by ?? body?.user ?? "").trim() || null;
+    const noteText = String(body?.note ?? "").trim() || null;
+    const now = new Date().toISOString();
+
+    const update: Record<string, any> = {};
+
+    // stage is required for moving
+    update.stage = nextStage;
+
+    // ONLY update optional columns if they actually exist on this row (prevents 500s)
+    const has = (k: string) => Object.prototype.hasOwnProperty.call(deal, k);
+
+    if (has("notes") && noteText) update.notes = noteText;
+
+    if (has("last_moved_at")) update.last_moved_at = now;
+    if (has("last_moved_by")) update.last_moved_by = movedBy;
+
+    if (has("move_history")) {
+      const mh = asArray((deal as any).move_history);
+      mh.push({
+        at: now,
+        by: movedBy,
+        from: (deal as any).stage ?? null,
+        to: nextStage,
+        note: noteText,
+      });
+      update.move_history = mh;
+    }
+
+    // update by primary id when possible
+    let q = sb.from("deals").update(update).select("*").limit(1);
+    if ((deal as any).id) q = q.eq("id", (deal as any).id);
+    else q = q.eq("deal_code", (deal as any).deal_code);
+
+    const { data, error: upErr } = await q;
+    if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+
+    const updated = data?.[0] ?? null;
+    return NextResponse.json({ ok: true, deal: updated });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+  }
+}

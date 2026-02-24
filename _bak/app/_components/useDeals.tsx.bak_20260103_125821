@@ -1,0 +1,70 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export type Stage =
+  | "submitted"
+  | "aip"
+  | "instructed"
+  | "granted"
+  | "ntu"
+  | "registrations";
+
+export const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "ntu", "registrations"];
+
+export type Deal = {
+  id: string;
+  stage: Stage;
+  deal_code?: string;
+  applicant?: string;
+  consultant?: string;
+  agent_name?: string;
+  amount_zar?: number;
+  amount?: number;
+  bank?: string;
+  banks?: any[];
+  [key: string]: any;
+};
+
+type DealsResponse = { ok: boolean; deals?: any[]; error?: string };
+
+export function useDeals() {
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const refreshAll = useCallback(async () => {
+    controllerRef.current?.abort();
+    const ac = new AbortController();
+    controllerRef.current = ac;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/deals", { cache: "no-store", signal: ac.signal });
+      const data: DealsResponse = await res.json().catch(() => ({ ok: false, error: "Bad JSON from /api/deals" }));
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `GET /api/deals failed (${res.status})`);
+      }
+
+      const list = Array.isArray(data.deals) ? data.deals : [];
+      setDeals(list as Deal[]);
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      // do NOT clear last good data
+      setError(e?.message || "Failed to load deals");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  return { deals, loading, error, refreshAll };
+}

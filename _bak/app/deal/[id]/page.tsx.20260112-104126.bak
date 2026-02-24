@@ -1,0 +1,9 @@
+﻿import DealViewClient from "./DealViewClient";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default function DealDetailPage({ params }: { params: { id: string } }) {
+  const dealKey = decodeURIComponent(String(params?.id || "")).trim();
+  return <DealViewClient dealKey={dealKey} />;
+}

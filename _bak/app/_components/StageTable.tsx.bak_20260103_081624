@@ -1,0 +1,196 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import MoveDealModal from "./MoveDealModal";
+import { useDeals, type Deal, type Stage } from "./useDeals";
+
+function money(n: number) {
+  return `R ${Number(n || 0).toLocaleString("en-ZA")}`;
+}
+
+function stageLabel(s: Stage) {
+  if (s === "submitted") return "Submitted";
+  if (s === "aip") return "AIP";
+  if (s === "instructed") return "Instructed";
+  if (s === "granted") return "Granted";
+  if (s === "registrations") return "Registrations";
+  return "NTU";
+}
+
+function toAmount(d: any): number {
+  const raw = d?.amount_zar ?? d?.amountZar ?? d?.amount ?? 0;
+  const n = typeof raw === "string" ? Number(raw) : Number(raw || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export default function StageTable({ stage }: { stage: Stage }) {
+  const { deals, moveDealToStage, refreshAll } = useDeals();
+
+  
+  const isRegistrations = stage === "registrations";
+const list = useMemo(() => {
+    const s = String(stage || "").toLowerCase();
+    return (deals || [])
+      .filter((d: any) => String(d.stage || "").toLowerCase() === s)
+      .map((d: any) => ({ ...d, amount: toAmount(d) })) as Deal[];
+  }, [deals, stage]);
+
+  const [open, setOpen] = useState(false);
+  const [activeDeal, setActiveDeal] = useState<any>(null);
+
+  async function handleMove(payload: { toStage: Stage; movedBy: string; note?: string; bankNotes?: any[] }) {
+    if (!activeDeal?.id) return;
+
+    // We send bankNotes to the PATCH endpoint by forwarding them through opts.note via API in useDeals,
+    // BUT safest is to call PATCH directly here to ensure bankNotes + attorney makes it through.
+    const res = await fetch(`/api/deals/${encodeURIComponent(activeDeal.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toStage: payload.toStage,
+        movedBy: payload.movedBy,
+        note: payload.note || "",
+        bankNotes: Array.isArray(payload.bankNotes) ? payload.bankNotes : [],
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || `Failed to move deal (${res.status})`);
+    }
+
+    await refreshAll();
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs font-extrabold text-black/60">Stage</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight text-black">{stageLabel(stage)}</div>
+          <div className="mt-1 text-sm font-semibold text-black/70">
+            {list.length} deal{list.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        {stage === "submitted" ? (
+          <Link
+            href="/submitted/new"
+            className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+          >
+            + New Submission
+          </Link>
+        ) : null}
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left">
+            <thead className="border-b border-black/10 bg-white">
+  {isRegistrations ? (
+    <tr className="text-xs font-extrabold text-black/70">
+      <th className="px-4 py-3">App. Date</th>
+      <th className="px-4 py-3">Consultant</th>
+      <th className="px-4 py-3">Agent</th>
+      <th className="px-4 py-3">Deal Ref</th>
+      <th className="px-4 py-3">Client Name</th>
+      <th className="px-4 py-3">Loan Amount</th>
+      <th className="px-4 py-3">Bank</th>
+      <th className="px-4 py-3">Attorney Instructed</th>
+      <th className="px-4 py-3">Attorney Tel No</th>
+      <th className="px-4 py-3">Reg.</th>
+      <th className="px-4 py-3">Notes</th>
+      <th className="px-4 py-3">Agent Comm PAID</th>
+      <th className="px-4 py-3">Payment due date</th>
+      <th className="px-4 py-3">Actions</th>
+    </tr>
+  ) : (
+    <tr className="text-xs font-extrabold text-black/70">
+      <th className="px-4 py-3">Deal</th>
+      <th className="px-4 py-3">Applicant</th>
+      <th className="px-4 py-3">Banks</th>
+      <th className="px-4 py-3">Amount</th>
+      <th className="px-4 py-3">Consultant</th>
+      <th className="px-4 py-3">Agent</th>
+      <th className="px-4 py-3">Actions</th>
+    </tr>
+  )}
+</thead>
+
+            <tbody className="divide-y divide-black/10">
+              {list.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm font-semibold text-black/60" colSpan={isRegistrations ? 15 : 7}>
+                    No deals in this stage yet.
+                  </td>
+                </tr>
+              ) : (
+                list.map((d: any) => {
+                  const banks = Array.isArray(d.banks) ? d.banks : [];
+                  const bankNames = banks.map((b: any) => b.bank_name).filter(Boolean).join(", ");
+
+                  return (
+                    <tr key={d.id} className="hover:bg-black/[0.02]">
+                      <td className="px-4 py-4">
+                        <Link href={`/deal/${d.id}`} className="text-sm font-extrabold text-black hover:underline">
+                          {d.deal_code || d.id}
+                        </Link>
+                        <div className="mt-1 text-xs font-bold text-black/50">{d.id}</div>
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.applicant || "-"}</td>
+
+                      <td className="px-4 py-4">
+                        <div className="text-sm font-semibold text-black">{bankNames || d.bank || "-"}</div>
+                        <div className="mt-1 text-xs font-bold text-black/50">
+                          {banks.length} bank{banks.length === 1 ? "" : "s"}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.agent_name || "-"}</td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => {
+                              setActiveDeal(d);
+                              setOpen(true);
+                            }}
+                            className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+                          >
+                            Move It
+                          </button>
+
+                          <Link
+                            href={`/deal/${d.id}`}
+                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeDeal ? (
+        <MoveDealModal
+          open={open}
+          onClose={() => setOpen(false)}
+          deal={activeDeal}
+          onMove={handleMove}
+        />
+      ) : null}
+    </div>
+  );
+}

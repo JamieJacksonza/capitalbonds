@@ -1,0 +1,115 @@
+export const runtime = "nodejs";
+
+import { createClient } from "@supabase/supabase-js";
+
+function getIdFromUrl(req: Request): string | null {
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+    return last ? String(last).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function getSupabaseServer() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error("Missing env NEXT_PUBLIC_SUPABASE_URL");
+  const key = service || anon;
+  if (!key) throw new Error("Missing env SUPABASE_SERVICE_ROLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function fromTable(sb: any, table: string) {
+  const schema = process.env.SUPABASE_DB_SCHEMA || "public";
+  return typeof sb.schema === "function" ? sb.schema(schema).from(table) : sb.from(table);
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+export async function PATCH(req: Request) {
+  const id = getIdFromUrl(req);
+  if (!id) return json({ ok: false, error: "Missing id" }, 400);
+
+  let body: any = {};
+  try { body = await req.json(); } catch { body = {}; }
+
+  const supabase = getSupabaseServer();
+
+  const toStage =
+    typeof body?.toStage === "string"
+      ? body.toStage
+      : typeof body?.stage === "string"
+      ? body.stage
+      : null;
+
+  const movedBy = typeof body?.movedBy === "string" ? body.movedBy : null;
+  const note = typeof body?.note === "string" ? body.note : "";
+
+  // Accept registration fields from EITHER:
+  // 1) body.registration.{...}
+  // 2) body.{registration_attorney,...} (flat)
+  const registration =
+    body?.registration && typeof body.registration === "object" ? body.registration : null;
+
+  const hasOwn = (obj: any, key: string) => obj && Object.prototype.hasOwnProperty.call(obj, key);
+  const regHas = (key: string) => hasOwn(registration, key) || hasOwn(body, key);
+  const regVal = (key: string) => (hasOwn(registration, key) ? registration[key] : hasOwn(body, key) ? body[key] : undefined);
+
+  // IMPORTANT: We IGNORE bankNotes completely for now.
+
+  const update: Record<string, any> = {};
+
+  if (toStage) update.stage = toStage;
+
+  // Store general note into deals.notes
+  if (note && String(note).trim()) update.notes = String(note).trim();
+
+  if (movedBy) {
+    update.last_moved_by = movedBy;
+    update.last_moved_at = new Date().toISOString();
+  }
+
+  // registration fields  write only if key was actually provided
+  if (regHas("registration_number")) update.registration_number = regVal("registration_number") ?? null;
+  if (regHas("registration_attorney")) update.registration_attorney = regVal("registration_attorney") ?? null;
+  if (regHas("registration_attorney_tel")) update.registration_attorney_tel = regVal("registration_attorney_tel") ?? null;
+  if (regHas("registration_attorney_contact")) update.registration_attorney_contact = regVal("registration_attorney_contact") ?? null;
+  if (regHas("agent_comm_paid")) update.agent_comm_paid = regVal("agent_comm_paid") ?? null;
+  if (regHas("payment_due_date")) update.payment_due_date = regVal("payment_due_date") ?? null;
+
+  if (Object.keys(update).length === 0) {
+    return json({ ok: false, error: "No valid fields provided to update." }, 400);
+  }
+
+  // Support UUID id OR deal_code
+  let q = fromTable(supabase, "deals").update(update);
+  q = isUuid(id) ? q.eq("id", id) : q.eq("deal_code", id);
+
+  const res = await q
+    .select(
+      "id, deal_code, stage, notes, last_moved_by, last_moved_at, registration_number, registration_attorney, registration_attorney_tel, registration_attorney_contact, agent_comm_paid, payment_due_date"
+    )
+    .single();
+
+  if (res.error) {
+    console.error("DEALS_PATCH_ERROR:", res.error);
+    return json({ ok: false, where: "deals.update", error: res.error.message }, 500);
+  }
+
+  return json({ ok: true, deal: res.data });
+}

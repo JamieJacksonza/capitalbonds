@@ -1,0 +1,355 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+function normalizeStage(s: any) {
+  const v = String(s ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "arp") return "aip";
+  if (v === "instructions" || v === "instruct") return "instructed";
+  if (v === "registration" || v === "regs" || v === "reg") return "registrations";
+  if (v === "grant" || v === "approved") return "granted";
+  return v;
+}
+function stageToRoute(stage: any) {
+  const s = normalizeStage(stage) || "submitted";
+  return "/" + encodeURIComponent(s);
+}
+
+type BankRow = { key: string; bank_id: any; bank_name: string };
+
+type AipBankForm = {
+  status?: string;
+  reference?: string;
+  amount?: string;
+  rate?: string;
+  term?: string;
+
+  rep_name?: string;
+  rep_contact?: string;
+
+  note?: string; // timestamped note per bank
+};
+
+export default function MoveDealModal(props: { open: boolean; onClose: () => void; deal: any }) {
+  const { open, onClose, deal } = props;
+
+  const [nextStage, setNextStage] = useState("aip");
+  const [movedBy, setMovedBy] = useState("");
+  const [stageNotes, setStageNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const currentStage = normalizeStage(deal?.stage);
+
+  const banks: BankRow[] = useMemo(() => {
+    const arr = Array.isArray(deal?.banks) ? deal.banks : [];
+    return arr.map((b: any, idx: number) => {
+      const bank_id = b?.id ?? b?.bank_id ?? null;
+      const bank_name = b?.bank_name ?? b?.name ?? b?.bank ?? String(bank_id ?? `Bank ${idx + 1}`);
+      const key = String(bank_id ?? bank_name ?? idx);
+      return { key, bank_id, bank_name };
+    });
+  }, [deal]);
+
+  const [aipBanks, setAipBanks] = useState<Record<string, AipBankForm>>({});
+
+  useEffect(() => {
+    if (!open) return;
+
+    setErr(null);
+    setBusy(false);
+    setStageNotes("");
+    setNextStage(currentStage || "aip");
+
+    try {
+      const v =
+        (typeof window !== "undefined" &&
+          (localStorage.getItem("cb_user") || localStorage.getItem("user") || localStorage.getItem("name"))) ||
+        "";
+      setMovedBy(String(v || movedBy || ""));
+    } catch {}
+
+    setAipBanks({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, deal?.id]);
+
+  function setAipField(bankKey: string, field: keyof AipBankForm, value: string) {
+    setAipBanks((prev) => ({
+      ...prev,
+      [bankKey]: { ...(prev[bankKey] || {}), [field]: value },
+    }));
+  }
+
+  async function confirm() {
+    const target = String(deal?.id ?? deal?.deal_code ?? deal?.dealCode ?? "").trim();
+    if (!target) {
+      setErr("Missing deal id / deal_code on this row.");
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+
+    const stage = normalizeStage(nextStage) || currentStage || "submitted";
+
+    const aipBankDetails =
+      normalizeStage(stage) === "aip"
+        ? banks
+            .map((b) => {
+              const f = aipBanks[b.key] || {};
+
+              const status = (f.status || "").trim();
+              const reference = (f.reference || "").trim();
+              const amount = (f.amount || "").trim();
+              const rate = (f.rate || "").trim();
+              const term = (f.term || "").trim();
+              const rep_name = (f.rep_name || "").trim();
+              const rep_contact = (f.rep_contact || "").trim();
+              const note = (f.note || "").trim();
+
+              const hasAnything = status || reference || amount || rate || term || rep_name || rep_contact || note;
+              if (!hasAnything) return null;
+
+              return {
+                bank_id: b.bank_id,
+                bank_name: b.bank_name,
+                status: status || null,
+                reference: reference || null,
+                amount: amount || null,
+                rate: rate || null,
+                term: term || null,
+                rep_name: rep_name || null,
+                rep_contact: rep_contact || null,
+                note: note || null, // API can timestamp into bank-notes history
+              };
+            })
+            .filter(Boolean)
+        : [];
+
+    const payload: any = {
+      toStage: stage,
+      stage,
+      movedBy: movedBy?.trim() ? movedBy.trim() : null,
+
+      // timestamped note (global + per-stage)
+      stageNotes: stageNotes?.trim() ? stageNotes.trim() : null,
+      note: stageNotes?.trim() ? stageNotes.trim() : null,
+
+      stageForNotes: stage,
+      aipBankDetails,
+    };
+
+    try {
+      const res = await fetch(`/api/deals/${encodeURIComponent(target)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Move failed (${res.status})`);
+      }
+
+      onClose();
+      setTimeout(() => window.location.assign(stageToRoute(stage)), 50);
+    } catch (e: any) {
+      setErr(e?.message || "Move failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
+          <div>
+            <div className="text-sm font-extrabold text-black">Move deal V2 (AIP fields active)</div>
+            <div className="text-xs font-semibold text-black/60">
+              {deal?.deal_code ? `Deal ref: ${deal.deal_code}` : `Deal id: ${String(deal?.id ?? "")}`}
+            </div>
+            <div className="text-xs font-semibold text-black/50">Banks detected: {banks.length}</div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="grid gap-4 p-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/70">Next stage</div>
+              <select
+                value={nextStage}
+                onChange={(e) => setNextStage(e.target.value)}
+                className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-extrabold text-black outline-none"
+              >
+                <option value="submitted">Submitted</option>
+                <option value="aip">AIP</option>
+                <option value="instructed">Instructed</option>
+                <option value="granted">Granted</option>
+                <option value="ntu">NTU</option>
+                <option value="registrations">Registrations</option>
+              </select>
+            </label>
+
+            <label className="grid gap-1">
+              <div className="text-xs font-extrabold text-black/70">Moved by</div>
+              <input
+                value={movedBy}
+                onChange={(e) => setMovedBy(e.target.value)}
+                placeholder="Name (optional)"
+                className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+              />
+            </label>
+          </div>
+
+          {normalizeStage(nextStage) === "aip" && (
+            <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+              <div className="text-sm font-extrabold text-black">AIP bank details (per bank)</div>
+              <div className="mt-1 text-xs font-semibold text-black/60">
+                These banks are pulled from what the user selected in Submitted.
+              </div>
+
+              <div className="mt-3 grid gap-3">
+                {banks.length === 0 ? (
+                  <div className="text-sm font-semibold text-black/60">No banks linked to this deal yet.</div>
+                ) : (
+                  banks.map((b) => {
+                    const f = aipBanks[b.key] || {};
+                    return (
+                      <div key={b.key} className="rounded-2xl border border-black/10 bg-white p-4">
+                        <div className="text-xs font-extrabold text-black/70">{b.bank_name}</div>
+
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Status</div>
+                            <select
+                              value={f.status || ""}
+                              onChange={(e) => setAipField(b.key, "status", e.target.value)}
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            >
+                              <option value="">(none)</option>
+                              <option value="submitted">Submitted</option>
+                              <option value="pending">Pending</option>
+                              <option value="approved">Approved</option>
+                              <option value="declined">Declined</option>
+                            </select>
+                          </label>
+
+                          <label className="grid gap-1 sm:col-span-2">
+                            <div className="text-[11px] font-extrabold text-black/60">Reference</div>
+                            <input
+                              value={f.reference || ""}
+                              onChange={(e) => setAipField(b.key, "reference", e.target.value)}
+                              placeholder="AIP reference"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Amount</div>
+                            <input
+                              value={f.amount || ""}
+                              onChange={(e) => setAipField(b.key, "amount", e.target.value)}
+                              placeholder="e.g. 850000"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Rate</div>
+                            <input
+                              value={f.rate || ""}
+                              onChange={(e) => setAipField(b.key, "rate", e.target.value)}
+                              placeholder="e.g. Prime - 1"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Term</div>
+                            <input
+                              value={f.term || ""}
+                              onChange={(e) => setAipField(b.key, "term", e.target.value)}
+                              placeholder="e.g. 240 months"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Bank rep name</div>
+                            <input
+                              value={f.rep_name || ""}
+                              onChange={(e) => setAipField(b.key, "rep_name", e.target.value)}
+                              placeholder="e.g. Sarah Jacobs"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+
+                          <label className="grid gap-1">
+                            <div className="text-[11px] font-extrabold text-black/60">Bank rep contact</div>
+                            <input
+                              value={f.rep_contact || ""}
+                              onChange={(e) => setAipField(b.key, "rep_contact", e.target.value)}
+                              placeholder="e.g. 082... / email"
+                              className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="mt-3 grid gap-1">
+                          <div className="text-[11px] font-extrabold text-black/60">Bank note (timestamped)</div>
+                          <textarea
+                            value={f.note || ""}
+                            onChange={(e) => setAipField(b.key, "note", e.target.value)}
+                            rows={3}
+                            placeholder={`Note for ${b.bank_name}`}
+                            className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+                          />
+                        </label>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          <label className="grid gap-1">
+            <div className="text-xs font-extrabold text-black/70">Notes (timestamped)</div>
+            <textarea
+              value={stageNotes}
+              onChange={(e) => setStageNotes(e.target.value)}
+              rows={4}
+              placeholder="Type a note that should be saved with a timestamp..."
+              className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-black outline-none"
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={confirm}
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-extrabold text-white shadow-sm disabled:opacity-60"
+            >
+              {busy ? "Saving..." : "Confirm move"}
+            </button>
+
+            {err && <div className="text-sm font-semibold text-red-600">{err}</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
