@@ -1,0 +1,272 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { getSessionFromRequest } from "@/app/lib/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function getAdmin() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+function normStage(v: any) {
+  return String(v || "").trim().toLowerCase();
+}
+
+const ALLOWED_NON_ADMIN_STAGE_MOVES: Record<string, string[]> = {
+  submitted: ["aip", "ntu"],
+  aip: ["granted", "ntu"],
+  granted: ["instructed", "ntu"],
+  instructed: ["registrations", "ntu"],
+  registrations: ["ntu"],
+  ntu: [],
+};
+
+function isAllowedNonAdminMove(fromStage: string, toStage: string) {
+  const allowed = ALLOWED_NON_ADMIN_STAGE_MOVES[fromStage] || [];
+  return allowed.includes(toStage);
+}
+
+function pickFirst(objA: any, objB: any, keys: string[]) {
+  for (const k of keys) {
+    const v = objA?.[k];
+    if (v !== undefined) return v;
+    const v2 = objB?.[k];
+    if (v2 !== undefined) return v2;
+  }
+  return undefined;
+}
+
+function toBoolOrNull(v: any) {
+  if (v === true || v === false) return v;
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return null;
+  if (s === "true" || s === "yes" || s === "y" || s === "1") return true;
+  if (s === "false" || s === "no" || s === "n" || s === "0") return false;
+  return null;
+}
+
+async function sendInsuranceWebhook(deal: any, meta: { movedBy?: any; note?: any; stageData?: any }) {
+  const url = process.env.MAKE_INSURANCE_WEBHOOK_URL || "";
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "insurance_needed",
+        deal,
+        movedBy: meta?.movedBy ?? null,
+        note: meta?.note ?? null,
+        stageData: meta?.stageData ?? null,
+      }),
+    });
+  } catch (e) {
+    console.error("INSURANCE_WEBHOOK_ERROR:", e);
+  }
+}
+
+async function sendInstructedToRegistrationsWebhook(
+  deal: any,
+  meta: { movedBy?: any; note?: any; stageData?: any; fromStage?: string; toStage?: string; movedAt?: string }
+) {
+  const url = process.env.MAKE_INSTRUCTED_TO_REGISTRATIONS_WEBHOOK_URL || "";
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "deal_moved_instructed_to_registrations",
+        from_stage: meta?.fromStage ?? "instructed",
+        to_stage: meta?.toStage ?? "registrations",
+        moved_by: meta?.movedBy ?? null,
+        moved_at: meta?.movedAt ?? new Date().toISOString(),
+        note: meta?.note ?? null,
+        stage_data: meta?.stageData ?? null,
+        deal,
+      }),
+    });
+  } catch (e) {
+    console.error("INSTRUCTED_TO_REGISTRATIONS_WEBHOOK_ERROR:", e);
+  }
+}
+
+async function handle(req: NextRequest) {
+  const body = await req.json().catch(() => ({} as any));
+
+  const dealId = body?.dealId ?? body?.deal_id ?? body?.id;
+  const toStageRaw = body?.toStage ?? body?.to_stage ?? body?.stage;
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+  }
+
+  const headerUser = (req.headers.get("x-cb-user") || "").trim();
+  const movedBy = session.name || headerUser || body?.movedBy || body?.moved_by || body?.actor || null;
+  const note = body?.note ?? body?.notes ?? null;
+
+  const toStage = normStage(toStageRaw);
+
+  if (!dealId || !toStage) {
+    return NextResponse.json({ ok: false, error: "Missing dealId/id and/or toStage" }, { status: 400 });
+  }
+
+  const supabase = getAdmin();
+
+  const { data: cur, error: curErr } = await supabase
+    .from("deals")
+    .select("id, stage, consultant, move_history")
+    .eq("id", dealId)
+    .single();
+
+  if (curErr || !cur) {
+    return NextResponse.json({ ok: false, error: curErr?.message || "Deal not found" }, { status: 404 });
+  }
+
+  const fromStage = normStage((cur as any)?.stage);
+  const ownerConsultant = String((cur as any)?.consultant || "").trim().toLowerCase();
+  const currentUser = String(session?.name || "").trim().toLowerCase();
+
+  if (session.role !== "admin" && ownerConsultant && ownerConsultant !== currentUser) {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  if (session.role !== "admin" && !isAllowedNonAdminMove(fromStage, toStage)) {
+    return NextResponse.json(
+      { ok: false, error: "Only admins can move deals backwards or to this stage." },
+      { status: 403 }
+    );
+  }
+
+  const stageData =
+    (body as any)?.data ??
+    (body as any)?.stageData ??
+    (body as any)?.stage_data ??
+    (body as any)?.computedStageData ??
+    (body as any)?.computedStagePayload ??
+    (body as any)?.stagePayload ??
+    (body as any)?.stage_payload ??
+    (body as any)?.payload?.data ??
+    (body as any)?.payload?.stageData ??
+    null;
+
+  const nowIso = new Date().toISOString();
+
+  const updates: any = {
+    stage: toStage,
+    updated_at: nowIso,
+    last_moved_at: nowIso,
+    last_moved_by: movedBy,
+  };
+
+  const insuranceRaw = pickFirst(stageData, body, ["insurance_needed", "insuranceNeeded", "insurance"]);
+  const insuranceParsed = toBoolOrNull(insuranceRaw);
+  if (insuranceParsed !== null) updates.insurance_needed = insuranceParsed;
+
+  const attorneyVal = pickFirst(stageData, body, ["attorney", "Attorney"]);
+  if (attorneyVal !== undefined) updates.attorney = attorneyVal ? String(attorneyVal) : null;
+
+  const regNum = pickFirst(stageData, body, ["registration_number", "registrationNumber", "regNumber"]);
+  if (regNum !== undefined) updates.registration_number = regNum ? String(regNum) : null;
+
+  const regAtt = pickFirst(stageData, body, ["registration_attorney", "registrationAttorney", "attorneyName"]);
+  if (regAtt !== undefined) updates.registration_attorney = regAtt ? String(regAtt) : null;
+
+  const regTel = pickFirst(stageData, body, [
+    "registration_attorney_tel",
+    "registrationAttorneyTel",
+    "registration_attorney_contact",
+    "registrationAttorneyContact",
+    "attorneyTel",
+    "attorneyContact",
+  ]);
+  if (regTel !== undefined) {
+    const v = regTel ? String(regTel) : null;
+    updates.registration_attorney_tel = v;
+    updates.registration_attorney_contact = v;
+  }
+
+  const regEmail = pickFirst(stageData, body, ["registration_attorney_email", "registrationAttorneyEmail", "attorneyEmail"]);
+  if (regEmail !== undefined) updates.registration_attorney_email = regEmail ? String(regEmail) : null;
+
+  const regRef = pickFirst(stageData, body, ["registration_attorney_reference", "registrationAttorneyReference", "attorneyReference", "reference"]);
+  if (regRef !== undefined) updates.registration_attorney_reference = regRef ? String(regRef) : null;
+
+  const regDate = pickFirst(stageData, body, ["registration_paid_at", "registrationPaidAt", "registration_date", "registrationDate"]);
+  if (regDate !== undefined) updates.registration_paid_at = regDate ? String(regDate).slice(0, 10) : null;
+
+  const due = pickFirst(stageData, body, ["payment_due_date", "paymentDueDate", "dueDate"]);
+  if (due !== undefined) updates.payment_due_date = due ? String(due).slice(0, 10) : null;
+
+  const estReg = pickFirst(stageData, body, ["estimated_reg_date", "estimatedRegDate", "instructed_estimated_reg_date"]);
+  if (estReg !== undefined) updates.estimated_reg_date = estReg ? String(estReg).slice(0, 10) : null;
+
+  const comm = pickFirst(stageData, body, ["agent_comm_paid", "agentCommPaid", "commissionPaid"]);
+  if (comm !== undefined) updates.agent_comm_paid = toBoolOrNull(comm);
+
+  const prev = Array.isArray((cur as any)?.move_history) ? (cur as any).move_history : [];
+  const entry: any = {
+    at: nowIso,
+    by: movedBy,
+    from: fromStage || null,
+    to: toStage,
+    note: typeof note === "string" && note.trim() ? note.trim() : null,
+  };
+
+  if (stageData && typeof stageData === "object" && Object.keys(stageData).length) {
+    entry.data = stageData;
+  }
+
+  updates.move_history = [...prev, entry];
+
+  const { error: upErr } = await supabase.from("deals").update(updates).eq("id", dealId);
+  if (upErr) {
+    return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+  }
+
+  await supabase.from("deal_activity").insert({
+    deal_id: dealId,
+    action: "move",
+    from_stage: fromStage || null,
+    to_stage: toStage,
+    moved_by: movedBy,
+    actor: movedBy,
+    moved_at: nowIso,
+    note: typeof note === "string" && note.trim() ? note.trim() : null,
+  });
+
+  if (toStage === "instructed" || (fromStage === "instructed" && toStage === "registrations")) {
+    const { data: dealRow } = await supabase.from("deals").select("*").eq("id", dealId).single();
+    if (dealRow) {
+      if (toStage === "instructed") {
+        await sendInsuranceWebhook(dealRow, { movedBy, note, stageData });
+      }
+      if (fromStage === "instructed" && toStage === "registrations") {
+        await sendInstructedToRegistrationsWebhook(dealRow, {
+          movedBy,
+          note,
+          stageData,
+          fromStage,
+          toStage,
+          movedAt: nowIso,
+        });
+      }
+    }
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function POST(req: NextRequest) {
+  return handle(req);
+}
+
+export async function PATCH(req: NextRequest) {
+  return handle(req);
+}

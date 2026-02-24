@@ -1,0 +1,200 @@
+﻿export type Stage = "submitted" | "aip" | "instructed" | "granted" | "registrations" | "ntu";
+
+export const STAGES: Stage[] = ["submitted", "aip", "instructed", "granted", "registrations", "ntu"];
+
+export const stageMeta: Record<
+  Stage,
+  { title: string; description: string; path: string }
+> = {
+  submitted: {
+    title: "Submitted",
+    description: "New applications received. Intake + validation happens here.",
+    path: "/submitted",
+  },
+  aip: {
+    title: "AIP",
+    description: "Applications in principle. Review affordability + docs progress.",
+    path: "/aip",
+  },
+  instructed: {
+    title: "Instructed",
+    description: "Bond instruction issued. Track milestones and outstanding items.",
+    path: "/instructed",
+  },
+  granted: {
+    title: "Granted",
+    description: "Approved deals. Treat as the wins list and final checks.",
+    path: "/granted",
+  },
+  registrations: {
+    title: "Registrations",
+    description: "Registered deals. Capture registration + payment + commission status.",
+    path: "/registrations",
+  },
+  ntu: {
+    title: "NTU",
+    description: "Not taken up / declined. Keep for audit and possible reopen.",
+    path: "/ntu",
+  },
+};
+
+export const stageMoves: Record<Stage, Array<{ label: string; next: Stage }>> = {
+  submitted: [
+    { label: "Move to AIP", next: "aip" },
+    { label: "Move to NTU", next: "ntu" },
+  ],
+  aip: [
+    { label: "Move to Instructed", next: "instructed" },
+    { label: "Move to NTU", next: "ntu" },
+  ],
+  instructed: [
+    { label: "Move to Granted", next: "granted" },
+    { label: "Move to NTU", next: "ntu" },
+  ],
+  granted: [
+    { label: "Move to Registrations", next: "registrations" },
+    { label: "Move to NTU", next: "ntu" },
+  ],
+  registrations: [
+    { label: "Move to NTU", next: "ntu" },
+  ],
+  ntu: [{ label: "Reopen to Submitted", next: "submitted" }],
+};
+
+export type Deal = {
+  id: string;
+  applicant: string;
+  consultant: string;
+  bank: string;
+  amount: number;
+  submitted: string; // YYYY-MM-DD
+  stage: Stage;
+  status: string;
+  notes?: string;
+
+  // date the deal became "Granted" (used for chart filters)
+  grantedAt?: string; // YYYY-MM-DD
+};
+
+// ? UPDATED CONSULTANTS (your requested names)
+export const CONSULTANTS = ["Kristie", "Elmarie", "Cindy", "Chelsea"];
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function ymdFromBase(addDays: number) {
+  const day = ((addDays - 1) % 28) + 1;
+  return `2025-12-${pad2(day)}`;
+}
+
+function lcg(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (1664525 * s + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+const FIRST = [
+  "Aiden","Liam","Ethan","Noah","Jayden","Mason","Kai","Logan","Daniel","Michael",
+  "Ava","Mia","Zoey","Emma","Nina","Sofia","Layla","Chloe","Amara","Leah",
+  "Tyrese","Keegan","Reece","Wesley","Tariq","Zara","Talia","Imani","Nandi","Thando",
+];
+
+const LAST = [
+  "Jacobs","Petersen","Daniels","Naidoo","Williams","Abrahams","Smith","Johnson","Mokoena","Dlamini",
+  "Van der Merwe","Botha","Du Plessis","Khan","Pillay","Davids","Arendse","Swanepoel","De Klerk","Govender",
+  "Nel","Fourie","Pienaar","Adams","Hendricks","Muller","Sithole","Mahlangu","Louw","Visser",
+];
+
+const BANKS = ["FNB", "Standard Bank", "Absa", "Nedbank", "Capitec", "Investec"];
+
+const SUB_STATUS = ["New", "Under Review", "Docs Missing", "Awaiting Client", "Ready for AIP"];
+const AIP_STATUS = ["AIP issued", "AIP pending update", "Affordability check"];
+const INSTRUCTED_STATUS = ["Instructed", "Valuation scheduled", "Awaiting attorneys"];
+const GRANTED_STATUS = ["Granted", "Granted (conditions)", "Granted (final sign-off)"];
+const NTU_STATUS = ["Declined", "Client withdrew", "Not taken up"];
+
+const NOTES = [
+  "Awaiting payslips + bank statements.",
+  "Employment letter needs confirmation.",
+  "Client asked to adjust amount.",
+  "Bank requested updated ID copy.",
+  "Valuation pending scheduling.",
+  "Waiting on attorney details.",
+  "Affordability shortfall flagged.",
+  "Need proof of residence.",
+  "Bank statement missing page 2.",
+  "Client will revert tomorrow.",
+];
+
+function pick<T>(arr: T[], r: () => number) {
+  return arr[Math.floor(r() * arr.length)];
+}
+
+function makeApplicant(r: () => number) {
+  return `${pick(FIRST, r)} ${pick(LAST, r)}`;
+}
+
+function makeAmount(r: () => number) {
+  const min = 650000;
+  const max = 3800000;
+  const raw = min + Math.floor(r() * (max - min));
+  return Math.round(raw / 10000) * 10000;
+}
+
+function makeId(n: number) {
+  return `SB-${String(n).padStart(5, "0")}`;
+}
+
+function makeDeal(n: number, stage: Stage, submitted: string, r: () => number): Deal {
+  const bank = pick(BANKS, r);
+  const applicant = makeApplicant(r);
+  const consultant = pick(CONSULTANTS, r);
+  const amount = makeAmount(r);
+
+  let status = "New";
+  if (stage === "submitted") status = pick(SUB_STATUS, r);
+  if (stage === "aip") status = pick(AIP_STATUS, r);
+  if (stage === "instructed") status = pick(INSTRUCTED_STATUS, r);
+  if (stage === "granted") status = pick(GRANTED_STATUS, r);
+  if (stage === "ntu") status = pick(NTU_STATUS, r);
+
+  const d: Deal = {
+    id: makeId(n),
+    applicant,
+    consultant,
+    bank,
+    amount,
+    submitted,
+    stage,
+    status,
+    notes: pick(NOTES, r),
+  };
+
+  // seed grantedAt for granted deals (so filters work immediately)
+  if (stage === "granted") d.grantedAt = submitted;
+
+  return d;
+}
+
+function generateSeedDeals(): Deal[] {
+  const r = lcg(20251225);
+  const out: Deal[] = [];
+
+  for (let i = 1; i <= 55; i++) out.push(makeDeal(1000 + i, "submitted", ymdFromBase(i), r));
+  for (let i = 1; i <= 8; i++) out.push(makeDeal(2000 + i, "aip", ymdFromBase(3 + i), r));
+  for (let i = 1; i <= 6; i++) out.push(makeDeal(3000 + i, "instructed", ymdFromBase(7 + i), r));
+  for (let i = 1; i <= 10; i++) out.push(makeDeal(4000 + i, "granted", ymdFromBase(10 + i), r));
+  for (let i = 1; i <= 6; i++) out.push(makeDeal(5000 + i, "ntu", ymdFromBase(12 + i), r));
+
+  return out;
+}
+
+export const seedDeals: Deal[] = generateSeedDeals();
+
+
+
+
+

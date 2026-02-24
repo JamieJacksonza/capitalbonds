@@ -1,0 +1,58 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "**/*.mts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "node_modules",
+    "_bak",
+    "_backups",
+    "_disabled_routes_20260103_183753",
+    "_disabled_routes_20260103_183753/**",
+    "_rollback_snapshots",
+    "_rollback_snapshots/**",
+    "**/_bak/**",
+    "**/_backups/**",
+    "**/_disabled_routes_*/**",
+    "**/_rollback_snapshots/**",
+    "**/.contrast-backup-*/**",
+    "**/*.bak",
+    "**/*.bak/**"
+  ]
+}
