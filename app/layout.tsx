@@ -1,4 +1,4 @@
-﻿import "./globals.css";
+import "./globals.css";
 import type { Metadata } from "next";
 import AppTopBar from "./_components/AppTopBar";
 
@@ -6,8 +6,8 @@ export const metadata: Metadata = {
   title: "Capital Bonds Dashboard",
   description: "Internal pipeline dashboard for bond applications.",
   icons: {
-    icon: "/capital-bonds-logo.svg",
-    apple: "/capital-bonds-logo.svg",
+    icon: "/capital-bonds-favicon.png",
+    apple: "/capital-bonds-favicon.png",
   },
 };
 
@@ -18,11 +18,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-[#182439] text-white">
+      <body className="min-h-screen bg-white text-slate-900">
         <AppTopBar />
-        <main className="mx-auto w-full max-w-none px-6 py-8">{children}</main>
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</main>
       </body>
     </html>
   );
 }
-

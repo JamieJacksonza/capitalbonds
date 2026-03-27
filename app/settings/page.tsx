@@ -267,11 +267,11 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-10 pt-4">
-      <div className="rounded-3xl border border-white/20 bg-white p-6 shadow-xl shadow-black/10">
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-7 shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-black/45">Workspace settings</div>
-            <h1 className="mt-1 text-3xl font-black tracking-tight text-black">{heading}</h1>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Workspace settings</div>
+            <h1 className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">{heading}</h1>
             {loadErr ? <div className="mt-3 text-sm font-semibold text-red-600">{loadErr}</div> : null}
           </div>
           {me ? (
@@ -287,9 +287,9 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="mt-5 rounded-3xl border border-white/20 bg-white p-6 shadow-lg shadow-black/5">
-        <div className="text-lg font-black text-black">Reset password</div>
-        <p className="mt-1 text-sm font-semibold text-black/55">Update your account password securely.</p>
+      <div className="mt-5 rounded-3xl border border-slate-200/80 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">
+        <div className="text-lg font-bold text-[#142037]">Reset password</div>
+        <p className="mt-1 text-sm font-medium text-slate-500">Update your account password securely.</p>
 
         <form onSubmit={changePassword} className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
           <input
@@ -331,11 +331,11 @@ export default function SettingsPage() {
       </div>
 
       {isAdmin ? (
-        <div className="mt-5 rounded-3xl border border-white/20 bg-white p-6 shadow-lg shadow-black/5">
+        <div className="mt-5 rounded-3xl border border-slate-200/80 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-lg font-black text-black">Admin controls</div>
-              <p className="mt-1 text-sm font-semibold text-black/55">Manage permissions and team access from one place.</p>
+              <div className="text-lg font-bold text-[#142037]">Admin controls</div>
+              <p className="mt-1 text-sm font-medium text-slate-500">Manage permissions and team access from one place.</p>
             </div>
             <span className="rounded-full border border-black/15 bg-black px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-white">
               Admin mode

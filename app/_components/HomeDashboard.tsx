@@ -433,32 +433,23 @@ export default function HomeDashboard() {
 
   return (
     <div className="w-full">
-      <div className="mx-auto max-w-7xl px-7 py-10 md:px-12 lg:px-16">
-        <div className="mb-10">
-          <Image
-            src="/capital-bonds-logo.svg"
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-8 lg:px-10">
+        <div className="mb-10 flex justify-center">
+          <img
+            src="/ccb-crm-banner-logo-333.png"
             alt="Capital Bonds"
-            width={2400}
-            height={600}
-            priority
-            className="h-[360px] w-full object-contain"
+            className="block h-[360px] w-full object-contain"
           />
         </div>
 
         {/* Header + small date filter */}
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="text-3xl font-extrabold text-white">Dashboard</div>
-            <div className="mt-2 text-sm text-white/80">Live view from Supabase</div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Dashboard</div>
+            <div className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">Executive Pipeline View</div>
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-4">
-            <a
-              href="/pipeline?add=1"
-              className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
-            >
-              + Contribute to Pipeline
-            </a>
             <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
               <div className="text-[10px] font-extrabold text-black/60">Date filter (submitted)</div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -484,7 +475,7 @@ export default function HomeDashboard() {
 
                 <button
                   onClick={() => refreshAll?.()}
-                  className="rounded-xl bg-black px-3 py-1.5 text-[10px] font-extrabold text-white hover:opacity-90"
+                  className="rounded-xl bg-[#142037] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-white hover:bg-[#1a2a49]"
                 >
                   Refresh
                 </button>
@@ -526,7 +517,7 @@ export default function HomeDashboard() {
 
         {/* Stage cards (longer/wider so totals stay on one line) */}
         <div className="mb-10">
-          <div className="mb-4 text-xs font-extrabold text-white">Deal Breakdown</div>
+          <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.16em] text-[#142037]/55">Deal Breakdown</div>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-2">
             {stageSummary.map((s) => (
               <div key={String(s.stage)} className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
@@ -615,13 +606,10 @@ export default function HomeDashboard() {
       <div>
         <div className="text-sm font-extrabold text-black">Consultant Performance Score (0-100)</div>
         <div className="mt-1 text-xs font-semibold text-black/60">
-          Weighted by stage progress, value, and speed (NTU penalized).
+          We score each deal using 3 things: how far it has progressed, how big the deal value is, and how recent it is.
         </div>
-        <div className="mt-2 text-[11px] font-semibold text-black/60">
-          DealScore = StatusPoints * ln(value + 1) * (1 / (1 + ageDays/14))
-        </div>
-        <div className="mt-1 text-[11px] font-semibold text-black/50">
-          Score = (ConsultantRawScore / MaxRawScore) * 100
+        <div className="mt-1 text-xs font-semibold text-black/60">
+          NTU deals reduce the score.
         </div>
       </div>
     </div>

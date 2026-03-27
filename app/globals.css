@@ -1,23 +1,188 @@
 @import "tailwindcss";
 
 :root {
-  --background: #182439;
-  --foreground: #ffffff;
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-muted: #f1f5f9;
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(20, 32, 55, 0.16);
+  --accent: #142037;
+  --accent-soft: #eef2f8;
+  --shadow-sm: 0 10px 30px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: "Plus Jakarta Sans", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-body);
+}
+
+html {
+  color-scheme: light;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.012em;
+  line-height: 1.5;
+  font-weight: 450;
 }
 
-/* Force stronger contrast (premium dashboard readability) */
-:root { color-scheme: light; }
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+  font-weight: 650;
+}
+
+p,
+li,
+td,
+input,
+select,
+textarea {
+  font-family: var(--font-body);
+  line-height: 1.45;
+}
+
+button,
+label,
+th,
+nav a,
+[role="button"] {
+  font-family: var(--font-body);
+  letter-spacing: -0.01em;
+}
+
+label,
+th {
+  font-weight: 600;
+}
+
+button,
+[role="button"] {
+  font-weight: 600;
+}
+
+th {
+  line-height: 1.2;
+}
+
+td {
+  font-weight: 500;
+}
+
+small,
+.text-xs,
+.text-[10px],
+.text-[11px] {
+  letter-spacing: 0.005em;
+}
+
+[class*="font-black"] {
+  font-weight: 700 !important;
+  letter-spacing: -0.028em;
+}
+
+[class*="font-extrabold"] {
+  font-weight: 650 !important;
+  letter-spacing: -0.02em;
+}
+
+[class*="font-bold"] {
+  font-weight: 600 !important;
+  letter-spacing: -0.015em;
+}
+
+[class*="font-semibold"] {
+  font-weight: 500 !important;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top left, rgba(20, 32, 55, 0.05), transparent 28%),
+    linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  z-index: -1;
+}
+
+::selection {
+  background: rgba(20, 32, 55, 0.12);
+  color: var(--accent);
+}
+
+a,
+button,
+input,
+select,
+textarea {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+input,
+select,
+textarea {
+  box-shadow: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(20, 32, 55, 0.28);
+  box-shadow: 0 0 0 4px rgba(20, 32, 55, 0.08);
+}
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+thead tr th {
+  letter-spacing: 0.02em;
+}
+
+[class*="rounded-2xl border border-black/10 bg-white"],
+[class*="rounded-3xl border border-white/20 bg-white"],
+[class*="overflow-hidden rounded-2xl border border-black/10 bg-white"] {
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-sm);
+}
+
+[class*="rounded-2xl bg-black"],
+[class*="rounded-xl bg-black"],
+[class*="rounded-full bg-black"] {
+  background: var(--accent) !important;
+}
+
+[class*="border border-black/10 bg-white"]:hover,
+[class*="border border-black/10 px-"]:hover,
+[class*="border border-black/10 bg-white hover:border-black/20"]:hover {
+  border-color: var(--border-strong) !important;
+}
 

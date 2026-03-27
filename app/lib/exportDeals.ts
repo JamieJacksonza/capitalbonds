@@ -51,7 +51,7 @@ export function exportRowsToPdf(title: string, headers: string[], rows: Array<Ar
   <meta charset="utf-8" />
   <title>${escapeHtml(title)}</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+    body { font-family: Inter, Arial, sans-serif; padding: 24px; color: #111; }
     h1 { margin: 0 0 6px; font-size: 22px; }
     .meta { margin-bottom: 14px; color: #555; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }

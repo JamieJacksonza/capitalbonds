@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import MoveDealInline from "./MoveDealInline";
 import { useDeals } from "./useDeals";
@@ -10,6 +10,7 @@ import type { Deal, Stage } from "../lib/deals";
 import { exportRowsToCsv, exportRowsToPdf } from "../lib/exportDeals";
 
 const __USE_QUERY_STAGE = false;
+const INSURANCE_TOGGLE_STORAGE_KEY = "cb_insurance_toggle_by_deal_v1";
 
 function pickDealDeckId(d: any) {
   return (
@@ -228,14 +229,44 @@ function bondDueKey(d: any) {
 }
 
 export default function StageTable({ stage }: { stage: Stage }) {
-  const { deals } = useDeals();
+  const { deals, refreshAll } = useDeals();
 
   const normalized = useMemo(() => normalizeStage(stage), [stage]);
   const stageKey = normalized as Stage;
   const isRegistrations = normalized === "registrations";
   const isInstructed = normalized === "instructed";
   const isSubmitted = normalized === "submitted";
+  const showInsuranceColumn = ["submitted", "aip", "granted", "instructed"].includes(normalized);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [insuranceSavingById, setInsuranceSavingById] = useState<Record<string, boolean>>({});
+  const [insuranceById, setInsuranceById] = useState<Record<string, boolean>>({});
+  const [insuranceMsgById, setInsuranceMsgById] = useState<
+    Record<string, { type: "ok" | "err"; text: string }>
+  >({});
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(INSURANCE_TOGGLE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      const next: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof k === "string") next[k] = v === true;
+      }
+      setInsuranceById(next);
+    } catch {
+      // ignore bad local storage
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(INSURANCE_TOGGLE_STORAGE_KEY, JSON.stringify(insuranceById));
+    } catch {
+      // ignore storage write failures
+    }
+  }, [insuranceById]);
 
   const list = useMemo(() => {
     let next = (deals || [])
@@ -276,7 +307,78 @@ export default function StageTable({ stage }: { stage: Stage }) {
       .sort((a, b) => a.key.localeCompare(b.key));
   }, [isSubmitted, list]);
 
-  const colSpan = 7;
+  const colSpan = 7 + (showInsuranceColumn ? 1 : 0);
+
+  function normalizeInsurance(v: any) {
+    if (v === true) return true;
+    if (v === false) return false;
+    if (typeof v === "number") return v === 1;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes" || s === "y";
+    }
+    return false;
+  }
+
+  function dealInsuranceOn(d: any) {
+    const id = String(d?.id ?? "").trim();
+    if (id && Object.prototype.hasOwnProperty.call(insuranceById, id)) {
+      return insuranceById[id] === true;
+    }
+    return normalizeInsurance(d?.insurance_needed ?? d?.insuranceNeeded);
+  }
+
+  async function toggleInsurance(d: any, next: boolean) {
+    const id = String(d?.id ?? "").trim();
+    if (!id) return;
+
+    setInsuranceSavingById((prev) => ({ ...prev, [id]: true }));
+    setInsuranceMsgById((prev) => {
+      const nextMap = { ...prev };
+      delete nextMap[id];
+      return nextMap;
+    });
+
+    try {
+      const patchRes = await fetch(`/api/deals/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ insurance_needed: next }),
+      });
+      const patchJson = await patchRes.json().catch(() => ({} as any));
+      if (!patchRes.ok || patchJson?.ok === false) {
+        throw new Error(patchJson?.error || `Failed to update insurance (${patchRes.status})`);
+      }
+
+      setInsuranceById((prev) => ({ ...prev, [id]: next }));
+
+      if (next) {
+        const webhookRes = await fetch("/api/webhooks/insurance", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            deal: patchJson?.deal ?? { ...d, insurance_needed: next },
+            source: "stage_table_toggle",
+          }),
+        });
+        const webhookJson = await webhookRes.json().catch(() => ({} as any));
+        if (!webhookRes.ok || webhookJson?.ok === false) {
+          throw new Error(webhookJson?.error || `Insurance webhook failed (${webhookRes.status})`);
+        }
+        setInsuranceMsgById((prev) => ({ ...prev, [id]: { type: "ok", text: "Webhook sent" } }));
+      }
+
+      await refreshAll?.();
+    } catch (e: any) {
+      setInsuranceById((prev) => ({ ...prev, [id]: !next }));
+      setInsuranceMsgById((prev) => ({
+        ...prev,
+        [id]: { type: "err", text: e?.message || "Failed to update insurance" },
+      }));
+    } finally {
+      setInsuranceSavingById((prev) => ({ ...prev, [id]: false }));
+    }
+  }
 
   function pickUnifiedDate(d: any) {
     const bondDue = pickBondDueDate(d);
@@ -301,24 +403,21 @@ export default function StageTable({ stage }: { stage: Stage }) {
   );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
-      <div className="mb-10">
-  <Image
-    src="/capital-bonds-logo.svg"
-    alt="Capital Bonds"
-    width={1200}
-    height={300}
-    priority
-    className="h-[180px] w-full object-contain"
-  />
-</div>
+    <div className="mx-auto w-full max-w-none space-y-4 px-2 py-4 md:px-3 md:py-6 xl:px-4">
+      <div className="mb-10 flex justify-center">
+        <img
+          src="/ccb-crm-banner-logo-333.png"
+          alt="Capital Bonds"
+          className="block h-[360px] w-full object-contain"
+        />
+      </div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs font-extrabold text-white/70">Status</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight text-white">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Status</div>
+          <div className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">
             {stageLabel(stageKey)}
           </div>
-          <div className="mt-1 text-sm font-semibold text-white/70">
+          <div className="mt-2 text-sm font-medium text-slate-500">
             {list.length} deal{list.length === 1 ? "" : "s"}
           </div>
         </div>
@@ -327,24 +426,24 @@ export default function StageTable({ stage }: { stage: Stage }) {
           <button
             type="button"
             onClick={() => exportRowsToCsv(`${stageKey}-deals`, exportHeaders, exportRows)}
-            className="rounded-2xl border border-white/20 bg-black/40 px-4 py-2 text-xs font-extrabold text-white hover:border-white/40"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-[#142037] hover:border-slate-300"
           >
             Export CSV
           </button>
           <button
             type="button"
             onClick={() => exportRowsToPdf(`${stageLabel(stageKey)} Deals`, exportHeaders, exportRows)}
-            className="rounded-2xl border border-white/20 bg-black/40 px-4 py-2 text-xs font-extrabold text-white hover:border-white/40"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-[#142037] hover:border-slate-300"
           >
             Export PDF
           </button>
           {isInstructed ? (
             <div className="min-w-[220px]">
-              <div className="text-[11px] font-extrabold text-white/60">Filter status</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#142037]/55">Filter status</div>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-2 text-sm font-semibold text-white outline-none ring-0 focus:border-white/30"
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none ring-0"
               >
                 <option value="all">All statuses</option>
                 {instructedStatusOptions.map((opt) => (
@@ -359,7 +458,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
           {stageKey === "submitted" ? (
             <Link
               href="/submitted/new"
-              className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+              className="rounded-2xl bg-[#142037] px-5 py-3 text-sm font-bold uppercase tracking-[0.12em] text-white hover:bg-[#1a2a49]"
             >
               + New Submission
             </Link>
@@ -403,18 +502,22 @@ export default function StageTable({ stage }: { stage: Stage }) {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-black/10 bg-white shadow-sm">
+        <div className="bg-[#142037] px-5 py-4 text-sm font-bold uppercase tracking-[0.14em] text-white">
+          {stageLabel(stageKey)} Deals
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1300px] text-left">
+          <table className="w-full min-w-[1360px] text-left">
             <thead className="border-b border-black/10 bg-white">
               <tr className="text-xs font-extrabold text-black/70">
-                <th className="px-4 py-3">Deal Ops number</th>
-                <th className="px-4 py-3">Applicant</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Consultant</th>
-                <th className="px-4 py-3">Agent</th>
-                <th className="px-4 py-3">Bond Due Date</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-4 py-4">Deal Ops number</th>
+                <th className="px-4 py-4">Applicant</th>
+                <th className="px-4 py-4">Amount</th>
+                <th className="px-4 py-4">Consultant</th>
+                <th className="px-4 py-4">Agent</th>
+                <th className="px-4 py-4">Bond Due Date</th>
+                {showInsuranceColumn ? <th className="px-4 py-4">Insurance</th> : null}
+                <th className="px-4 py-4 text-right">Actions</th>
               </tr>
             </thead>
 
@@ -446,29 +549,61 @@ export default function StageTable({ stage }: { stage: Stage }) {
 
                   return (
                     <tr key={d.id} className={rowClass}>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-5">
                         <Link href={dealHref} className="text-sm font-extrabold text-black hover:underline">
                           {dealRef || d.deal_code || d.id || "-"}
                         </Link>
                       </td>
 
-                      <td className="px-4 py-4 text-sm font-semibold text-black">{pickApplicant(d)}</td>
+                      <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickApplicant(d)}</td>
 
-                      <td className="px-4 py-4 text-sm font-extrabold text-black">{money(toAmount(d))}</td>
+                      <td className="px-4 py-5 text-sm font-extrabold text-black whitespace-nowrap">{money(toAmount(d))}</td>
 
-                      <td className="px-4 py-4 text-sm font-semibold text-black">{d.consultant || "-"}</td>
+                      <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{d.consultant || "-"}</td>
 
-                      <td className="px-4 py-4 text-sm font-semibold text-black">{pickAgent(d)}</td>
+                      <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickAgent(d)}</td>
 
-                      <td className="px-4 py-4 text-sm font-semibold text-black">
+                      <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">
                         {pickUnifiedDate(d)}
                       </td>
 
-                      <td className="px-4 py-4">
-                        <div className="flex flex-wrap gap-2">
+                      {showInsuranceColumn ? (
+                        <td className="px-4 py-4">
+                          <label className="flex items-center gap-2 text-xs font-extrabold text-black">
+                            <input
+                              type="checkbox"
+                              checked={dealInsuranceOn(d)}
+                              disabled={insuranceSavingById[String(d?.id ?? "").trim()] === true}
+                              onChange={(e) => {
+                                const next = e.target.checked;
+                                setInsuranceById((prev) => ({
+                                  ...prev,
+                                  [String(d?.id ?? "").trim()]: next,
+                                }));
+                                toggleInsurance(d, next);
+                              }}
+                            />
+                            {dealInsuranceOn(d) ? "On" : "Off"}
+                          </label>
+                          {insuranceMsgById[String(d?.id ?? "").trim()] ? (
+                            <div
+                              className={
+                                insuranceMsgById[String(d?.id ?? "").trim()]?.type === "ok"
+                                  ? "mt-1 text-[11px] font-semibold text-green-700"
+                                  : "mt-1 text-[11px] font-semibold text-red-600"
+                              }
+                            >
+                              {insuranceMsgById[String(d?.id ?? "").trim()]?.text}
+                            </div>
+                          ) : null}
+                        </td>
+                      ) : null}
+
+                      <td className="px-4 py-5">
+                        <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
                           <Link
                             href={dealHref}
-                            className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                            className="rounded-2xl border border-black/10 bg-white px-3.5 py-2 text-[11px] font-extrabold text-black hover:border-black/20"
                           >
                             View
                           </Link>
@@ -484,8 +619,8 @@ export default function StageTable({ stage }: { stage: Stage }) {
         </div>
       </div>
 
-      <div className="text-xs font-semibold text-white/60">
-        Route: <span className="font-extrabold text-white/80">{stageToRoute(stageKey)}</span>
+      <div className="text-xs font-medium text-slate-500">
+        Route: <span className="font-bold text-[#142037]">{stageToRoute(stageKey)}</span>
       </div>
     </div>
   );

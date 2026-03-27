@@ -73,6 +73,17 @@ export default function PipelinePage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editErr, setEditErr] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
+    lead_date: "",
+    lead_type: "",
+    consultant: "",
+    agent: "",
+    lead_source: "",
+    client_name: "",
+    client_email: "",
+    client_cellphone: "",
+    loan_amount: "",
+    bond_amount: "",
+    purchase_price: "",
     follow_up_date: "",
     notes: "",
   });
@@ -171,6 +182,17 @@ export default function PipelinePage() {
     setEditErr(null);
     setEditLead(lead);
     setEditForm({
+      lead_date: String(lead.lead_date || "").slice(0, 10),
+      lead_type: String(lead.lead_type || ""),
+      consultant: String(lead.consultant || ""),
+      agent: String(lead.agent || ""),
+      lead_source: String(lead.lead_source || ""),
+      client_name: String(lead.client_name || ""),
+      client_email: String(lead.client_email || ""),
+      client_cellphone: String(lead.client_cellphone || ""),
+      loan_amount: String(lead.loan_amount || ""),
+      bond_amount: String(lead.bond_amount || ""),
+      purchase_price: String(lead.purchase_price || ""),
       follow_up_date: String(lead.follow_up_date || "").slice(0, 10),
       notes: String(lead.notes || ""),
     });
@@ -270,23 +292,25 @@ export default function PipelinePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           id: editLead.id,
+          lead_date: String(editForm.lead_date || "").trim() || null,
+          lead_type: String(editForm.lead_type || "").trim() || null,
+          consultant: String(editForm.consultant || "").trim() || null,
+          agent: String(editForm.agent || "").trim() || null,
+          lead_source: String(editForm.lead_source || "").trim() || null,
+          client_name: String(editForm.client_name || "").trim() || null,
+          client_email: String(editForm.client_email || "").trim() || null,
+          client_cellphone: String(editForm.client_cellphone || "").trim() || null,
+          loan_amount: String(editForm.loan_amount || "").trim() || null,
+          bond_amount: String(editForm.bond_amount || "").trim() || null,
+          purchase_price: String(editForm.purchase_price || "").trim() || null,
           follow_up_date: String(editForm.follow_up_date || "").trim() || null,
           notes: String(editForm.notes || "").trim(),
         }),
       });
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to update follow-up.");
-      setRows((prev) =>
-        prev.map((r) =>
-          r.id === editLead.id
-            ? {
-                ...r,
-                follow_up_date: String(editForm.follow_up_date || "").trim(),
-                notes: String(editForm.notes || ""),
-              }
-            : r
-        )
-      );
+      const updatedRow = json?.row as PipelineRow | undefined;
+      setRows((prev) => prev.map((r) => (r.id === editLead.id ? { ...r, ...(updatedRow || {}) } : r)));
       setEditLead(null);
     } catch (e: any) {
       setEditErr(e?.message || "Failed to update follow-up.");
@@ -373,16 +397,16 @@ export default function PipelinePage() {
   }, [rows]);
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-6 py-6">
+    <div className="mx-auto w-full max-w-none space-y-6 px-2 py-4 md:px-3 md:py-6 xl:px-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-xs font-extrabold text-white/70">Pipeline</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight text-white">Pipeline Leads</div>
-          <div className="mt-1 text-sm font-semibold text-white/70">Live pipeline leads</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Pipeline</div>
+          <div className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">Pipeline Leads</div>
+          <div className="mt-2 text-sm font-medium text-slate-500">Live pipeline leads</div>
         </div>
         <a
           href="/pipeline?add=1"
-          className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+          className="rounded-2xl bg-[#142037] px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-white hover:bg-[#1a2a49]"
         >
           + Add to Pipeline
         </a>
@@ -567,35 +591,40 @@ export default function PipelinePage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-left">
+      <div className="border-t border-black/10 bg-transparent">
+        <div className="bg-[#142037] px-5 py-4 text-sm font-bold uppercase tracking-[0.14em] text-white">
+          Pipeline Deals
+        </div>
+        <div>
+          <table className="w-full table-fixed text-left">
+            <colgroup>
+              <col className="w-[10%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+              <col className="w-[14%]" />
+              <col className="w-[30%]" />
+              <col className="w-[24%]" />
+            </colgroup>
             <thead className="border-b border-black/10 bg-white">
               <tr className="text-xs font-extrabold text-black/70">
-                <th className="px-4 py-3">Lead Date</th>
-                <th className="px-4 py-3">Lead Type</th>
-                <th className="px-4 py-3">Consultant</th>
-                <th className="px-4 py-3">Agent</th>
-                <th className="px-4 py-3">Client Name</th>
-                <th className="px-4 py-3">Loan Amount</th>
-                <th className="px-4 py-3">Notes</th>
-                <th className="px-4 py-3">Follow up date</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-4 py-4">Lead Date</th>
+                <th className="px-4 py-4">Lead Type</th>
+                <th className="px-4 py-4">Consultant</th>
+                <th className="px-4 py-4">Client Name</th>
+                <th className="px-4 py-4">Notes</th>
+                <th className="px-4 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/10">
               {filteredRows.map((r, i) => (
                 <tr key={i} className="hover:bg-black/[0.02]">
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{dateLabel(r.lead_date)}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{r.lead_type}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{r.consultant}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{r.agent}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{r.client_name}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{r.loan_amount}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black whitespace-pre-wrap">{r.notes}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-black">{dateLabel(r.follow_up_date)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
+                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{dateLabel(r.lead_date)}</td>
+                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{r.lead_type}</td>
+                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{r.consultant}</td>
+                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black break-words">{r.client_name}</td>
+                  <td className="px-4 py-5 align-top text-[11px] font-medium leading-5 text-black whitespace-pre-wrap break-words">{r.notes}</td>
+                  <td className="px-3 py-5 align-top">
+                    <div className="flex flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                       <select
                         disabled={!r.id || statusSavingId === r.id}
                         value={r.lead_type || ""}
@@ -603,26 +632,26 @@ export default function PipelinePage() {
                           if (!r.id) return;
                           updateLeadStatus(r.id, e.target.value);
                         }}
-                        className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:border-black/20 disabled:opacity-60"
+                        className="min-w-[104px] rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20 disabled:opacity-60"
                       >
                         <option value="">Set status</option>
                         <option value="New App">New App</option>
                         <option value="Pre-approval">Pre-approval</option>
                       </select>
                       <button
-                        className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                        className="rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20"
                         onClick={() => setViewLead(r)}
                       >
                         View
                       </button>
                       <button
-                        className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+                        className="rounded-2xl bg-black px-2.5 py-1.5 text-[10px] font-extrabold text-white hover:opacity-90"
                         onClick={() => openMove(r)}
                       >
                         Move to Submitted
                       </button>
                       <button
-                        className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                        className="rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20"
                         onClick={() => openEditFollowUp(r)}
                       >
                         Edit Follow-up
@@ -833,15 +862,123 @@ export default function PipelinePage() {
 
       {editLead ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
             <div className="text-sm font-extrabold text-black">Edit Follow-up</div>
             <div className="mt-1 text-xs font-semibold text-black/60">
-              Update follow-up date and notes for this pipeline lead.
+              Update all lead and client details for this pipeline lead.
             </div>
 
             {editErr ? <div className="mt-2 text-xs font-semibold text-red-600">{editErr}</div> : null}
 
-            <div className="mt-4 grid grid-cols-1 gap-3">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <label className="text-xs font-extrabold text-black/60">
+                Lead date
+                <input
+                  type="date"
+                  value={editForm.lead_date}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, lead_date: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Lead type
+                <select
+                  value={editForm.lead_type}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, lead_type: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                >
+                  <option value="">Select</option>
+                  <option value="New App">New App</option>
+                  <option value="Pre-approval">Pre-approval</option>
+                </select>
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Consultant
+                <select
+                  value={editForm.consultant}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, consultant: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                >
+                  <option value="">Select</option>
+                  {consultantOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Agent
+                <input
+                  value={editForm.agent}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, agent: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Lead source
+                <select
+                  value={editForm.lead_source}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, lead_source: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                >
+                  <option value="">Select</option>
+                  <option value="Website">Website</option>
+                  <option value="Inbound call">Inbound call</option>
+                  <option value="Outbound call">Outbound call</option>
+                  <option value="Agent">Agent</option>
+                </select>
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Client name
+                <input
+                  value={editForm.client_name}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, client_name: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Client email
+                <input
+                  type="email"
+                  value={editForm.client_email}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, client_email: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Client cellphone
+                <input
+                  type="tel"
+                  value={editForm.client_cellphone}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, client_cellphone: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Loan amount
+                <input
+                  value={editForm.loan_amount}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, loan_amount: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Bond amount
+                <input
+                  value={editForm.bond_amount}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, bond_amount: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
+              <label className="text-xs font-extrabold text-black/60">
+                Purchase price
+                <input
+                  value={editForm.purchase_price}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, purchase_price: e.target.value }))}
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
+                />
+              </label>
               <label className="text-xs font-extrabold text-black/60">
                 Follow-up date
                 <input
@@ -851,7 +988,7 @@ export default function PipelinePage() {
                   className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-semibold text-black outline-none focus:border-black/30"
                 />
               </label>
-              <label className="text-xs font-extrabold text-black/60">
+              <label className="text-xs font-extrabold text-black/60 md:col-span-2">
                 Notes
                 <textarea
                   value={editForm.notes}

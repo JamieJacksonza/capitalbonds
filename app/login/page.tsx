@@ -48,11 +48,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[70vh] max-w-md items-center">
-      <div className="w-full rounded-2xl border border-black/10 bg-white p-8 shadow-sm">
-        <div className="text-xs font-extrabold text-black/70">Capital Bonds</div>
-        <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-black">Sign in</h1>
-        <p className="mt-2 text-sm font-semibold text-black/80">
+    <div className="mx-auto flex min-h-[78vh] max-w-5xl items-center justify-center px-4 py-10">
+      <div className="grid w-full max-w-4xl gap-6 rounded-[32px] border border-slate-200/80 bg-white p-4 shadow-[0_24px_60px_rgba(15,23,42,0.10)] md:grid-cols-[1.05fr_0.95fr] md:p-5">
+        <div className="rounded-[28px] bg-[#142037] px-8 py-10 text-white">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Capital Bonds</div>
+          <h1 className="mt-3 text-4xl font-bold tracking-[-0.04em] text-white">Welcome back</h1>
+          <p className="mt-4 max-w-sm text-sm font-medium leading-6 text-white/72">
+            Access the pipeline, track status changes, and manage submissions from one executive dashboard.
+          </p>
+        </div>
+
+        <div className="rounded-[28px] border border-slate-200/80 bg-white p-8 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">
+        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Secure access</div>
+        <h1 className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">Sign in</h1>
+        <p className="mt-2 text-sm font-medium text-slate-500">
           Use your account email (or name) and password.
         </p>
 
@@ -88,13 +97,14 @@ export default function LoginPage() {
           <button
             disabled={loading}
             className={cls(
-              "w-full rounded-2xl bg-black px-4 py-3 text-sm font-extrabold text-white hover:opacity-90",
+              "w-full rounded-2xl bg-[#142037] px-4 py-3 text-sm font-bold uppercase tracking-[0.12em] text-white hover:bg-[#1a2a49]",
               loading && "opacity-60"
             )}
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
+        </div>
       </div>
     </div>
   );

@@ -26,6 +26,55 @@ function stageLabel(stage: string) {
   return stage;
 }
 
+function stageTotalTone(stage: string) {
+  if (stage === "submitted") {
+    return {
+      row: "bg-sky-50",
+      label: "text-sky-800",
+      muted: "text-sky-700/60",
+      total: "text-sky-900",
+    };
+  }
+  if (stage === "aip") {
+    return {
+      row: "bg-indigo-50",
+      label: "text-indigo-800",
+      muted: "text-indigo-700/60",
+      total: "text-indigo-900",
+    };
+  }
+  if (stage === "granted") {
+    return {
+      row: "bg-emerald-50",
+      label: "text-emerald-800",
+      muted: "text-emerald-700/60",
+      total: "text-emerald-900",
+    };
+  }
+  if (stage === "instructed") {
+    return {
+      row: "bg-amber-50",
+      label: "text-amber-800",
+      muted: "text-amber-700/60",
+      total: "text-amber-900",
+    };
+  }
+  if (stage === "ntu") {
+    return {
+      row: "bg-rose-50",
+      label: "text-rose-800",
+      muted: "text-rose-700/60",
+      total: "text-rose-900",
+    };
+  }
+  return {
+    row: "bg-black/[0.02]",
+    label: "text-black/60",
+    muted: "text-black/50",
+    total: "text-black",
+  };
+}
+
 function moneyZar(n: number) {
   if (!Number.isFinite(n)) return "-";
   return new Intl.NumberFormat("en-ZA", {
@@ -349,25 +398,22 @@ export default function OverviewPage() {
   }, [visibleDealIds, detailById]);
 
   return (
-    <div className="mx-auto w-full max-w-none space-y-6 px-4 py-4 md:px-6 lg:px-8">
-      <div className="mb-6">
-        <Image
-          src="/capital-bonds-logo.svg"
+    <div className="mx-auto w-full max-w-none space-y-6 px-2 py-4 md:px-3 lg:px-4">
+      <div className="mb-10 flex justify-center">
+        <img
+          src="/ccb-crm-banner-logo-333.png"
           alt="Capital Bonds"
-          width={1200}
-          height={300}
-          priority
-          className="h-[180px] w-full object-contain"
+          className="block h-[360px] w-full object-contain"
         />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-extrabold text-white/70">Overview</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight text-white">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Overview</div>
+          <div className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">
             Deal Pipeline Overview
           </div>
-          <div className="mt-1 text-sm font-semibold text-white/70">
+          <div className="mt-2 text-sm font-medium text-slate-500">
             {grouped.reduce((sum, g) => sum + g.deals.length, 0)} deal(s) shown
           </div>
         </div>
@@ -424,7 +470,7 @@ export default function OverviewPage() {
 
           <button
             onClick={() => refreshAll?.()}
-            className="rounded-2xl bg-black px-4 py-2 text-xs font-extrabold text-white hover:opacity-90"
+            className="rounded-2xl bg-[#142037] px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-white hover:bg-[#1a2a49]"
           >
             Refresh
           </button>
@@ -469,6 +515,7 @@ export default function OverviewPage() {
               {grouped.map((group) => {
                 const rows = group.deals;
                 const totalValue = rows.reduce((sum: number, d: DealAny) => sum + pickLoanAmountValue(d), 0);
+                const tone = stageTotalTone(group.stage);
                 if (!rows.length) {
                   return (
                     <tr key={group.stage} className="hover:bg-black/[0.02]">
@@ -571,15 +618,15 @@ export default function OverviewPage() {
                       </tr>
                     );
                     })}
-                    <tr className="bg-black/[0.02]">
-                      <td className="px-4 py-3 text-xs font-bold text-black/60">Status total</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-xs font-semibold text-black/50">-</td>
-                      <td className="px-4 py-3 text-sm font-extrabold text-black">
+                    <tr className={tone.row}>
+                      <td className={`px-4 py-3 text-xs font-bold ${tone.label}`}>Status total</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-xs font-semibold ${tone.muted}`}>-</td>
+                      <td className={`px-4 py-3 text-sm font-extrabold ${tone.total}`}>
                         {moneyZar(totalValue)}
                       </td>
                     </tr>

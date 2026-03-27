@@ -146,7 +146,7 @@ export default function ActivityPage() {
   const empty = useMemo(() => !loading && rows.length === 0, [loading, rows]);
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-6 py-6">
+    <div className="mx-auto w-full max-w-none px-2 py-6 md:px-3 xl:px-4">
       <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold text-black">Activity</h1>

@@ -1,25 +1,22 @@
 ﻿"use client";
 
 import React, { useMemo } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 
 type AnyDeal = Record<string, any>;
 type StageKey = "submitted" | "aip" | "instructed" | "granted" | "registrations" | "ntu";
 
 const CONSULTANT_PALETTE = [
-  "#e41a1c", // red
-  "#377eb8", // blue
-  "#4daf4a", // green
-  "#984ea3", // purple
-  "#ff7f00", // orange
-  "#ffff33", // yellow
-  "#a65628", // brown
-  "#f781bf", // pink
-  "#999999", // grey
-  "#00bcd4", // cyan
-  "#000000", // black
-  "#1b9e77", // teal
-];function hashStr(s: string) {
+  "#142037",
+  "#223454",
+  "#31496F",
+  "#43608F",
+  "#5E7CAA",
+  "#7F9AC0",
+  "#A3B8D5",
+  "#C4D2E5",
+];
+function hashStr(s: string) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h >>> 0;
@@ -27,8 +24,18 @@ const CONSULTANT_PALETTE = [
 
 function colorForConsultant(name: any) {
   const key = String(name ?? "").trim().toLowerCase() || "unknown";
-  const hue = hashStr(key) % 360;
-  return `hsl(${hue}, 85%, 45%)`;
+  return CONSULTANT_PALETTE[hashStr(key) % CONSULTANT_PALETTE.length];
+}
+
+function ExecutiveTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0];
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
+      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#142037]/55">{row?.name}</div>
+      <div className="mt-1 text-sm font-bold text-[#142037]">R {moneyZar(Number(row?.value || 0))}</div>
+    </div>
+  );
 }
 
 function moneyZar(n: number) {
@@ -199,16 +206,19 @@ export default function ConsultantPipelinePerformance({
           <div className="text-xs font-extrabold text-black/60">Pie</div>
 
           <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="h-[200px] min-w-0">
+            <div className="h-[220px] min-w-0 rounded-[24px] border border-slate-200/80 bg-slate-50/70 p-3">
               <ResponsiveContainer width="100%" height={200} minWidth={0} minHeight={0}>
                 <PieChart>
+                  <Tooltip content={<ExecutiveTooltip />} />
                   <Pie
                     data={model.pie}
                     dataKey="value"
                     nameKey="name"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={1}
+                    innerRadius={52}
+                    outerRadius={82}
+                    paddingAngle={3}
+                    stroke="#ffffff"
+                    strokeWidth={4}
                     isAnimationActive={false}
                   >
                     {model.pie.map((entry, idx) => (
@@ -226,13 +236,13 @@ export default function ConsultantPipelinePerformance({
                 <div className="text-xs font-semibold text-black/40">No deals in this status.</div>
               ) : (
                 model.pie.map((r) => (
-                  <div key={r.name} className="flex items-center justify-between gap-3">
+                  <div key={r.name} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/20" style={{ backgroundColor: r.fill }} />
-                      <div className="min-w-0 truncate text-xs font-extrabold text-black">{r.name}</div>
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-4 ring-white" style={{ backgroundColor: r.fill }} />
+                      <div className="min-w-0 truncate text-xs font-bold text-[#142037]">{r.name}</div>
                     </div>
 
-                    <div className="shrink-0 text-[10px] font-extrabold text-black/70">
+                    <div className="shrink-0 text-[10px] font-bold text-slate-600">
                       R {moneyZar(r.value)} <span className="text-black/45">({Math.round(r.pct)}%)</span>
                     </div>
                   </div>
@@ -279,7 +289,6 @@ export default function ConsultantPipelinePerformance({
     </div>
   );
 }
-
 
 
 

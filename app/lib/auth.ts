@@ -18,8 +18,13 @@ function env(name: string) {
 }
 
 function authSecret() {
-  // dev fallback so things don't explode
-  return env("AUTH_SECRET") || "dev-secret-change-me";
+  const secret = (env("AUTH_SECRET") || "").trim();
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET is required in production");
+  }
+  // dev fallback so local setup does not break
+  return "dev-secret-change-me";
 }
 
 export function getUsers(): Array<{ name: string; email: string; password: string; role: Role }> {
@@ -110,10 +115,11 @@ export function requireAdmin(req: Request): User {
 }
 
 export function makeSetCookie(token: string) {
-  // secure=false for localhost; when deployed on https you can add Secure
-  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax`;
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export function makeClearCookie() {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }

@@ -151,30 +151,27 @@ export default function AipTable() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 px-6 py-6">
-      <div className="mb-10">
-        <Image
-          src="/capital-bonds-logo.svg"
+    <div className="mx-auto w-full max-w-none space-y-4 px-2 py-4 md:px-3 md:py-6 xl:px-4">
+      <div className="mb-10 flex justify-center">
+        <img
+          src="/ccb-crm-banner-logo-333.png"
           alt="Capital Bonds"
-          width={1200}
-          height={300}
-          priority
-          className="h-[180px] w-full object-contain"
+          className="block h-[360px] w-full object-contain"
         />
       </div>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-xs font-extrabold text-white/70">Status</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight text-white">AIP</div>
-          <div className="mt-1 text-sm font-semibold text-white/70">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#142037]/55">Status</div>
+          <div className="mt-2 text-3xl font-bold tracking-[-0.03em] text-[#142037]">AIP</div>
+          <div className="mt-2 text-sm font-medium text-slate-500">
             {list.length} deal{list.length === 1 ? "" : "s"}
           </div>
         </div>
 
         <Link
           href="/submitted/new"
-          className="rounded-2xl bg-black px-5 py-3 text-sm font-extrabold text-white hover:opacity-90"
+          className="rounded-2xl bg-[#142037] px-5 py-3 text-sm font-bold uppercase tracking-[0.12em] text-white hover:bg-[#1a2a49]"
         >
           + New Submission
         </Link>
@@ -182,33 +179,36 @@ export default function AipTable() {
           <button
             type="button"
             onClick={() => exportRowsToCsv("aip-deals", exportHeaders, exportRows)}
-            className="rounded-2xl border border-white/20 bg-black/40 px-4 py-2 text-xs font-extrabold text-white hover:border-white/40"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-[#142037] hover:border-slate-300"
           >
             Export CSV
           </button>
           <button
             type="button"
             onClick={() => exportRowsToPdf("AIP Deals", exportHeaders, exportRows)}
-            className="rounded-2xl border border-white/20 bg-black/40 px-4 py-2 text-xs font-extrabold text-white hover:border-white/40"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-[#142037] hover:border-slate-300"
           >
             Export PDF
           </button>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-black/10 bg-white shadow-sm">
+        <div className="bg-[#142037] px-5 py-4 text-sm font-bold uppercase tracking-[0.14em] text-white">
+          AIP Deals
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1200px] text-left">
             <thead className="border-b border-black/10 bg-white">
               <tr className="text-xs font-extrabold text-black/70">
-                <th className="px-4 py-3">Ops number</th>
-                <th className="px-4 py-3">Consultant</th>
-                <th className="px-4 py-3">Lead Source</th>
-                <th className="px-4 py-3">Client name</th>
-                <th className="px-4 py-3">Purchase price</th>
-                <th className="px-4 py-3">Loan amount</th>
-                <th className="px-4 py-3">Client main bank</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-4 py-4">Ops number</th>
+                <th className="px-4 py-4">Consultant</th>
+                <th className="px-4 py-4">Lead Source</th>
+                <th className="px-4 py-4">Client name</th>
+                <th className="px-4 py-4">Purchase price</th>
+                <th className="px-4 py-4">Loan amount</th>
+                <th className="px-4 py-4">Client main bank</th>
+                <th className="px-4 py-4 text-right">Actions</th>
               </tr>
             </thead>
 
@@ -222,7 +222,7 @@ export default function AipTable() {
               ) : (
                 list.map((d: DealAny) => (
                   <tr key={d?.id || pickDealRef(d)} className="hover:bg-black/[0.02]">
-                    <td className="px-4 py-4">
+                    <td className="px-4 py-5">
                       <Link
                         href={`/deal/${encodeURIComponent(d.id ?? "")}`}
                         className="text-sm font-extrabold text-black hover:underline"
@@ -230,17 +230,17 @@ export default function AipTable() {
                         {pickDealRef(d)}
                       </Link>
                     </td>
-                    <td className="px-4 py-4 text-sm font-semibold text-black">{pickConsultant(d)}</td>
-                    <td className="px-4 py-4 text-sm font-semibold text-black">{pickLeadSource(d)}</td>
-                    <td className="px-4 py-4 text-sm font-semibold text-black">{pickClientName(d)}</td>
-                    <td className="px-4 py-4 text-sm font-extrabold text-black">{pickPurchasePrice(d)}</td>
-                    <td className="px-4 py-4 text-sm font-extrabold text-black">{pickLoanAmount(d)}</td>
-                    <td className="px-4 py-4 text-sm font-semibold text-black">{pickMainBank(d)}</td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-wrap gap-2">
+                    <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickConsultant(d)}</td>
+                    <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickLeadSource(d)}</td>
+                    <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickClientName(d)}</td>
+                    <td className="px-4 py-5 text-sm font-extrabold text-black whitespace-nowrap">{pickPurchasePrice(d)}</td>
+                    <td className="px-4 py-5 text-sm font-extrabold text-black whitespace-nowrap">{pickLoanAmount(d)}</td>
+                    <td className="px-4 py-5 text-sm font-semibold text-black whitespace-nowrap">{pickMainBank(d)}</td>
+                    <td className="px-4 py-5">
+                      <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
                         <Link
                           href={`/deal/${encodeURIComponent(d.id ?? "")}`}
-                          className="rounded-2xl border border-black/10 bg-white px-4 py-2 text-xs font-extrabold text-black hover:border-black/20"
+                          className="rounded-2xl border border-black/10 bg-white px-3.5 py-2 text-[11px] font-extrabold text-black hover:border-black/20"
                         >
                           View
                         </Link>

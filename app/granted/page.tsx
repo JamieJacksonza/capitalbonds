@@ -1,5 +1,5 @@
-import GrantedTable from "@/app/_components/GrantedTable";
+import StageTable from "@/app/_components/StageTable";
 
 export default function GrantedPage() {
-  return <GrantedTable />;
+  return <StageTable stage="granted" />;
 }

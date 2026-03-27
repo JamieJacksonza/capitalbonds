@@ -325,9 +325,11 @@ export default function DealViewClient({ dealKey }: Props) {
     return uniq;
   }, [deal]);
 
+  const insuranceToggleStages = ["submitted", "aip", "granted", "instructed"];
+  const fromStage = String(searchParams.get("from") || "").toLowerCase();
+  const dealStage = String((deal as any)?.stage || "").toLowerCase();
   const showInsuranceToggle =
-    searchParams.get("from") === "registrations" ||
-    String((deal as any)?.stage || "").toLowerCase() === "registrations";
+    insuranceToggleStages.includes(fromStage) || insuranceToggleStages.includes(dealStage);
 
   const showAttorneyInput = false;
 
@@ -440,7 +442,11 @@ export default function DealViewClient({ dealKey }: Props) {
         throw new Error(json?.error || `Failed to update insurance (${res.status})`);
       }
 
-      setDeal((prev) => (prev ? { ...prev, insurance_needed: next } : prev));
+      const nextDeal = deal ? { ...deal, insurance_needed: next } : deal;
+      setDeal((prevDeal) => (prevDeal ? { ...prevDeal, insurance_needed: next } : prevDeal));
+      if (next && !prev) {
+        await sendInsuranceEmail(nextDeal, "deal_view_stage_toggle");
+      }
     } catch (e: any) {
       setInsuranceErr(e?.message || "Failed to update insurance");
       setInsuranceNeeded(prev);
@@ -449,8 +455,9 @@ export default function DealViewClient({ dealKey }: Props) {
     }
   }
 
-  async function sendInsuranceEmail() {
-    if (!deal) return;
+  async function sendInsuranceEmail(dealOverride?: any, source?: string) {
+    const payloadDeal = dealOverride || deal;
+    if (!payloadDeal) return;
     setInsuranceSendSaving(true);
     setInsuranceSendMsg(null);
 
@@ -459,8 +466,8 @@ export default function DealViewClient({ dealKey }: Props) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          deal,
-          source: "deal_view_registrations",
+          deal: payloadDeal,
+          source: source || "deal_view_registrations",
         }),
       });
 
@@ -874,6 +881,47 @@ export default function DealViewClient({ dealKey }: Props) {
             </div>
             {bondDueErr ? (
               <div className="mt-2 text-xs font-semibold text-red-600">{bondDueErr}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {showInsuranceToggle ? (
+          <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-extrabold text-black/45">Insurance Needed</div>
+                <div className="text-sm font-semibold text-black/70">
+                  Turn on to mark insurance needed and send the insurance webhook.
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-extrabold text-black">
+                <input
+                  type="checkbox"
+                  checked={insuranceNeeded}
+                  disabled={insuranceSaving || insuranceSendSaving}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    const prev = insuranceNeeded;
+                    setInsuranceNeeded(next);
+                    saveInsurance(next, prev);
+                  }}
+                />
+                {insuranceNeeded ? "Yes" : "No"}
+              </label>
+            </div>
+            {insuranceErr ? (
+              <div className="mt-2 text-xs font-semibold text-red-600">{insuranceErr}</div>
+            ) : null}
+            {insuranceSendMsg ? (
+              <div
+                className={
+                  insuranceSendMsg.type === "ok"
+                    ? "mt-2 text-xs font-semibold text-green-700"
+                    : "mt-2 text-xs font-semibold text-red-600"
+                }
+              >
+                {insuranceSendMsg.text}
+              </div>
             ) : null}
           </div>
         ) : null}

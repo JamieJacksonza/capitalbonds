@@ -13,13 +13,25 @@ const money = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
-// Bright palette
 const COLORS = [
-  "#DC2626", // red
-  "#F59E0B", // yellow/amber
-  "#111827", // black (near-black)
-  "#2563EB", // blue
+  "#142037",
+  "#2D4A7C",
+  "#4C6798",
+  "#7893BD",
+  "#AABDD7",
+  "#D6E1F0",
 ];
+
+function ExecutiveTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0];
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
+      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#142037]/55">{row?.name}</div>
+      <div className="mt-1 text-sm font-bold text-[#142037]">{money(Number(row?.value) || 0)}</div>
+    </div>
+  );
+}
 
 function todayYMD() {
   return new Date().toISOString().slice(0, 10);
@@ -243,19 +255,19 @@ export default function ConsultantPie({ deals }: { deals: Deal[] }) {
         </div>
       ) : (
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <div className="min-w-0">
+          <div className="min-w-0 rounded-[28px] border border-slate-200/80 bg-slate-50/70 p-4">
             <ResponsiveContainer width="100%" height={320} minWidth={0} minHeight={0}>
               <PieChart>
-                <Tooltip
-                  formatter={(value: any, name: any) => [money(Number(value) || 0), String(name)]}
-                />
+                <Tooltip content={<ExecutiveTooltip />} />
                 <Pie
                   data={data}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={75}
-                  outerRadius={130}
-                  paddingAngle={2}
+                  innerRadius={82}
+                  outerRadius={126}
+                  paddingAngle={3}
+                  stroke="#ffffff"
+                  strokeWidth={4}
                   onClick={(entry: any) => goToConsultant(String(entry?.name || ""))}
                 >
                   {data.map((_, i) => (
@@ -280,24 +292,24 @@ export default function ConsultantPie({ deals }: { deals: Deal[] }) {
                     if (isOther) e.preventDefault();
                   }}
                   className={[
-                    "flex items-center justify-between rounded-2xl border border-black/10 bg-white px-4 py-3",
-                    isOther ? "cursor-default" : "hover:bg-black/[0.02] hover:border-black/20 transition",
+                    "flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3",
+                    isOther ? "cursor-default" : "hover:bg-slate-50 hover:border-slate-300 transition",
                   ].join(" ")}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span
-                      className="h-3 w-3 rounded-full"
+                      className="h-3 w-3 rounded-full ring-4 ring-white"
                       style={{ backgroundColor: COLORS[i % COLORS.length] }}
                     />
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-extrabold text-black">
+                      <div className="truncate text-sm font-bold text-[#142037]">
                         {r.name}
                       </div>
-                      <div className="text-xs font-bold text-black/80">{pct}%</div>
+                      <div className="text-xs font-semibold text-slate-500">{pct}%</div>
                     </div>
                   </div>
 
-                  <div className="text-sm font-extrabold text-black">{money(r.value)}</div>
+                  <div className="text-sm font-bold text-[#142037]">{money(r.value)}</div>
                 </Link>
               );
             })}
@@ -307,4 +319,3 @@ export default function ConsultantPie({ deals }: { deals: Deal[] }) {
     </div>
   );
 }
-

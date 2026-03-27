@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
   };
@@ -21,7 +21,7 @@ function supabaseAdmin() {
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: { ...corsHeaders(), Allow: "GET,POST,OPTIONS" } });
+  return new NextResponse(null, { status: 204, headers: { ...corsHeaders(), Allow: "GET,POST,PATCH,DELETE,OPTIONS" } });
 }
 
 export async function GET() {
@@ -83,12 +83,45 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ ok: false, error: "id is required" }, { status: 400, headers: corsHeaders() });
     }
 
+    const sb = supabaseAdmin();
+    const wantsFollowUpDateUpdate = body?.follow_up_date !== undefined;
+    let currentFollowUpDate: string | null = null;
+
+    if (wantsFollowUpDateUpdate) {
+      const { data: currentRow, error: currentErr } = await sb
+        .from("pipeline_leads")
+        .select("follow_up_date")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (currentErr) {
+        return NextResponse.json({ ok: false, error: currentErr.message }, { status: 500, headers: corsHeaders() });
+      }
+
+      currentFollowUpDate = currentRow?.follow_up_date ? String(currentRow.follow_up_date) : null;
+    }
+
     const update: any = {};
+    if (body?.lead_date !== undefined) update.lead_date = body.lead_date || null;
     if (body?.lead_type !== undefined) update.lead_type = body.lead_type || null;
+    if (body?.consultant !== undefined) update.consultant = body.consultant || null;
+    if (body?.agent !== undefined) update.agent = body.agent || null;
+    if (body?.lead_source !== undefined) update.lead_source = body.lead_source || null;
+    if (body?.client_name !== undefined) update.client_name = body.client_name || null;
+    if (body?.client_email !== undefined) update.client_email = body.client_email || null;
+    if (body?.client_cellphone !== undefined) update.client_cellphone = body.client_cellphone || null;
+    if (body?.loan_amount !== undefined) update.loan_amount = body.loan_amount ? Number(body.loan_amount) : null;
+    if (body?.bond_amount !== undefined) update.bond_amount = body.bond_amount ? Number(body.bond_amount) : null;
+    if (body?.purchase_price !== undefined) update.purchase_price = body.purchase_price ? Number(body.purchase_price) : null;
     if (body?.follow_up_date !== undefined) update.follow_up_date = body.follow_up_date || null;
     if (body?.notes !== undefined) update.notes = body.notes || null;
+    if (wantsFollowUpDateUpdate) {
+      const nextFollowUpDate = body?.follow_up_date ? String(body.follow_up_date) : null;
+      if (nextFollowUpDate !== currentFollowUpDate) {
+        update.follow_up_sent = null;
+      }
+    }
 
-    const sb = supabaseAdmin();
     const { data, error } = await sb
       .from("pipeline_leads")
       .update(update)

@@ -1,5 +1,5 @@
-import AipTable from "@/app/_components/AipTable";
+import StageTable from "@/app/_components/StageTable";
 
 export default function AipPage() {
-  return <AipTable />;
+  return <StageTable stage="aip" />;
 }

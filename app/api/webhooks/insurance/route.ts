@@ -14,8 +14,13 @@ function json(data: any, status = 200) {
 }
 
 export async function POST(req: Request) {
-  const url = process.env.MAKE_INSURANCE_WEBHOOK_URL || "";
-  if (!url) {
+  const urlPrimary = process.env.MAKE_INSURANCE_WEBHOOK_URL || "";
+  const urlSecondary =
+    process.env.MAKE_INSURANCE_WEBHOOK_URL_2 ||
+    "https://hook.us2.make.com/fsqn5q7p91de37mhs3wfh8rwm1xiublu";
+
+  const urls = Array.from(new Set([urlPrimary, urlSecondary].map((u) => String(u || "").trim()).filter(Boolean)));
+  if (!urls.length) {
     return json({ ok: false, error: "Missing MAKE_INSURANCE_WEBHOOK_URL" }, 500);
   }
 
@@ -41,21 +46,24 @@ export async function POST(req: Request) {
   };
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const results = await Promise.all(
+      urls.map(async (url) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        return { url, ok: res.ok, status: res.status, detail: text.slice(0, 500) };
+      })
+    );
 
-    const text = await res.text();
-    if (!res.ok) {
-      return json(
-        { ok: false, error: `Webhook failed (${res.status})`, detail: text.slice(0, 500) },
-        502
-      );
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) {
+      return json({ ok: false, error: "One or more insurance webhooks failed", failed }, 502);
     }
 
-    return json({ ok: true });
+    return json({ ok: true, sent: results.map((r) => ({ url: r.url, status: r.status })) });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Webhook request failed" }, 502);
   }

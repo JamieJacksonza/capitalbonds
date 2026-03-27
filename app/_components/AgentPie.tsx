@@ -23,13 +23,24 @@ function moneyZar(n: number) {
   }).format(Number(n || 0));
 }
 
-// High contrast / distinctive palette
 const COLORS = [
-  "#DC2626", // red
-  "#F59E0B", // yellow/amber
-  "#111827", // black (near-black)
-  "#2563EB", // blue
+  "#142037",
+  "#2D4A7C",
+  "#5B7BB2",
+  "#9FB4D4",
+  "#C9D7EA",
 ];
+
+function ExecutiveTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0];
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
+      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#142037]/55">{row?.name}</div>
+      <div className="mt-1 text-sm font-bold text-[#142037]">{moneyZar(Number(row?.value || 0))}</div>
+    </div>
+  );
+}
 
 export default function AgentPie() {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -96,22 +107,21 @@ export default function AgentPie() {
         <div className="mt-5 text-sm font-semibold text-black/70">No granted deals yet.</div>
       ) : (
         <div className="mt-5">
-          <div className="min-w-0">
+          <div className="min-w-0 rounded-[28px] border border-slate-200/80 bg-slate-50/70 p-4">
             <ResponsiveContainer width="100%" height={260} minWidth={0} minHeight={0}>
               <PieChart>
-                <Tooltip
-                  formatter={(v: any) => moneyZar(Number(v || 0))}
-                  labelFormatter={(l: any) => String(l)}
-                />
+                <Tooltip content={<ExecutiveTooltip />} />
                 <Pie
                   data={rows}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={58}
-                  outerRadius={92}
-                  paddingAngle={2}
+                  innerRadius={64}
+                  outerRadius={96}
+                  paddingAngle={3}
+                  stroke="#ffffff"
+                  strokeWidth={4}
                 >
                   {rows.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
@@ -126,13 +136,13 @@ export default function AgentPie() {
             {rows.map((r, i) => {
               const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
               return (
-                <div key={r.name} className="flex items-center justify-between gap-3 rounded-xl border border-black/10 bg-white px-3 py-2">
+                <div key={r.name} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <span className="h-3 w-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                    <div className="text-sm font-extrabold text-black">{r.name}</div>
-                    <div className="text-xs font-bold text-black/50">{pct}%</div>
+                    <span className="h-3 w-3 rounded-full ring-4 ring-white" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                    <div className="text-sm font-bold text-[#142037]">{r.name}</div>
+                    <div className="text-xs font-semibold text-slate-500">{pct}%</div>
                   </div>
-                  <div className="text-sm font-extrabold text-black">{moneyZar(r.value)}</div>
+                  <div className="text-sm font-bold text-[#142037]">{moneyZar(r.value)}</div>
                 </div>
               );
             })}
@@ -142,4 +152,3 @@ export default function AgentPie() {
     </div>
   );
 }
-
