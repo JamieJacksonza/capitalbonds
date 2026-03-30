@@ -26,6 +26,11 @@ function getSupabaseServer() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function getInlineSizeLimitBytes() {
+  const raw = Number(process.env.MAKE_INSURANCE_INLINE_MAX_BYTES || 3 * 1024 * 1024);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3 * 1024 * 1024;
+}
+
 async function buildInsuranceDocumentPayload(deal: any) {
   const bucket = String(
     deal?.insurance_document_bucket ??
@@ -62,6 +67,7 @@ async function buildInsuranceDocumentPayload(deal: any) {
   let signedUrl: string | null = null;
   let base64: string | null = null;
   let dataUrl: string | null = null;
+  let inlineIncluded = false;
   try {
     const supabase = getSupabaseServer();
     const signed = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24 * 7);
@@ -72,29 +78,53 @@ async function buildInsuranceDocumentPayload(deal: any) {
     const downloaded = await supabase.storage.from(bucket).download(path);
     if (!downloaded.error && downloaded.data) {
       const buffer = Buffer.from(await downloaded.data.arrayBuffer());
-      base64 = buffer.toString("base64");
-      const safeMimeType = mimeType || "application/octet-stream";
-      dataUrl = `data:${safeMimeType};base64,${base64}`;
+      if (buffer.byteLength <= getInlineSizeLimitBytes()) {
+        base64 = buffer.toString("base64");
+        const safeMimeType = mimeType || "application/octet-stream";
+        dataUrl = `data:${safeMimeType};base64,${base64}`;
+        inlineIncluded = true;
+      }
     }
   } catch {}
+
+  const normalizedSize = Number.isFinite(Number(sizeRaw)) ? Number(sizeRaw) : null;
+  const normalizedMimeType = mimeType || "application/octet-stream";
 
   return {
     bucket,
     path,
     name: name || null,
-    mimeType: mimeType || null,
-    size: Number.isFinite(Number(sizeRaw)) ? Number(sizeRaw) : null,
+    mimeType: normalizedMimeType,
+    size: normalizedSize,
     uploadedAt: uploadedAt || null,
     signedUrl,
     base64,
     dataUrl,
+    inlineIncluded,
     googleVisionInput:
       base64
         ? {
             fileName: name || null,
-            mimeType: mimeType || "application/octet-stream",
+            mimeType: normalizedMimeType,
             contentBase64: base64,
             sourceType: "inline_base64",
+          }
+        : null,
+    makeFile:
+      base64
+        ? {
+            name: name || "insurance-document",
+            mimeType: normalizedMimeType,
+            data: base64,
+          }
+        : null,
+    makeDownload:
+      signedUrl
+        ? {
+            url: signedUrl,
+            method: "GET",
+            fileName: name || "insurance-document",
+            mimeType: normalizedMimeType,
           }
         : null,
   };
@@ -149,12 +179,23 @@ export async function POST(req: Request) {
   }
 
   const insuranceDocument = await buildInsuranceDocumentPayload(deal);
+  const currentInfo = buildCurrentInfo(deal);
 
   const payload = {
     event: "insurance_email",
     deal,
-    currentInfo: buildCurrentInfo(deal),
+    currentInfo,
     insuranceDocument,
+    insurance_document_url: insuranceDocument?.signedUrl ?? null,
+    insurance_document_name: insuranceDocument?.name ?? null,
+    insurance_document_mime_type: insuranceDocument?.mimeType ?? null,
+    insurance_document_size: insuranceDocument?.size ?? null,
+    insurance_document_base64: insuranceDocument?.base64 ?? null,
+    insurance_document_data_url: insuranceDocument?.dataUrl ?? null,
+    insurance_document_inline_included: insuranceDocument?.inlineIncluded ?? false,
+    make_file: insuranceDocument?.makeFile ?? null,
+    make_download: insuranceDocument?.makeDownload ?? null,
+    vision_file: insuranceDocument?.googleVisionInput ?? null,
     meta: {
       source: body?.source || "deal_view_registrations",
       sentAt: new Date().toISOString(),
