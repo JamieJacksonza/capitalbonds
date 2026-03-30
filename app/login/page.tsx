@@ -23,6 +23,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ email, password }),
       });
 
@@ -38,8 +39,7 @@ export default function LoginPage() {
         if (name) localStorage.setItem("cb_user", name);
       } catch {}
 
-      router.push("/");
-      router.refresh();
+      window.location.assign("/dashboard");
     } catch (err: any) {
       setMsg(err?.message || "Login failed");
     } finally {
