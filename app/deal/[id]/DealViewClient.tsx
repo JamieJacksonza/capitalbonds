@@ -482,6 +482,7 @@ export default function DealViewClient({ dealKey }: Props) {
 
       const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}/insurance-document`, {
         method: "POST",
+        credentials: "same-origin",
         body: formData,
       });
 
@@ -534,6 +535,7 @@ export default function DealViewClient({ dealKey }: Props) {
     try {
       const res = await fetch("/api/webhooks/insurance", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deal: payloadDeal,

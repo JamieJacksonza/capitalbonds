@@ -345,6 +345,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
     try {
       const patchRes = await fetch(`/api/deals/${encodeURIComponent(id)}`, {
         method: "PATCH",
+        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ insurance_needed: next }),
       });
@@ -359,6 +360,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
         const webhookDeal = patchJson?.deal ?? dealOverride ?? { ...d, insurance_needed: next };
         const webhookRes = await fetch("/api/webhooks/insurance", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             deal: webhookDeal,
@@ -390,6 +392,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
 
     const res = await fetch(`/api/deals/${encodeURIComponent(id)}/insurance-document`, {
       method: "POST",
+      credentials: "same-origin",
       body: formData,
     });
     const json = await res.json().catch(() => ({} as any));

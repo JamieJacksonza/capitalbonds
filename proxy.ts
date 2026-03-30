@@ -7,6 +7,7 @@ export function proxy(req: NextRequest) {
 
   const isPublic =
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/webhooks") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/public");
