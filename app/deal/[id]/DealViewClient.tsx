@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 // keep this if the file exists in your project
@@ -93,6 +93,9 @@ export default function DealViewClient({ dealKey }: Props) {
   const [insuranceErr, setInsuranceErr] = useState<string | null>(null);
   const [insuranceSendSaving, setInsuranceSendSaving] = useState(false);
   const [insuranceSendMsg, setInsuranceSendMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [insuranceUploadSaving, setInsuranceUploadSaving] = useState(false);
+  const insuranceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const insuranceUploadModeRef = useRef<"toggle-on" | "replace" | null>(null);
   const [attorney, setAttorney] = useState("");
   const [attorneySaving, setAttorneySaving] = useState(false);
   const [attorneyErr, setAttorneyErr] = useState<string | null>(null);
@@ -277,6 +280,11 @@ export default function DealViewClient({ dealKey }: Props) {
       { label: "Purchase amount", value: d.purchase_price ?? d.purchasePrice ? fmtMoneyZar(d.purchase_price ?? d.purchasePrice) : "-" },
       { label: "Consultant", value: d.consultant  },
       { label: "Lead Source", value: d.agent_name ?? d.agent  },
+      { label: "Insurance Document", value: d.insurance_document_name ?? d.insuranceDocumentName },
+      {
+        label: "Insurance Document Uploaded",
+        value: dateOnly(d.insurance_document_uploaded_at ?? d.insuranceDocumentUploadedAt),
+      },
       { label: "Attorney Details", value: hasAttorneyDetails ? attorneyDetails : "-" },
       { label: "Instructed Date", value: dateOnly(d.instructed_date ?? d.instructed_at ?? d.stage_updated_at ?? d.updated_at) },
       {
@@ -425,7 +433,7 @@ export default function DealViewClient({ dealKey }: Props) {
     }
   }
 
-  async function saveInsurance(next: boolean, prev: boolean) {
+  async function saveInsurance(next: boolean, prev: boolean, dealOverride?: Deal | null) {
     if (!dealKey) return;
     setInsuranceSaving(true);
     setInsuranceErr(null);
@@ -442,8 +450,14 @@ export default function DealViewClient({ dealKey }: Props) {
         throw new Error(json?.error || `Failed to update insurance (${res.status})`);
       }
 
-      const nextDeal = deal ? { ...deal, insurance_needed: next } : deal;
-      setDeal((prevDeal) => (prevDeal ? { ...prevDeal, insurance_needed: next } : prevDeal));
+      const nextDeal =
+        json?.deal ??
+        (dealOverride
+          ? { ...dealOverride, insurance_needed: next }
+          : deal
+          ? { ...deal, insurance_needed: next }
+          : deal);
+      setDeal(nextDeal ?? null);
       if (next && !prev) {
         await sendInsuranceEmail(nextDeal, "deal_view_stage_toggle");
       }
@@ -452,6 +466,62 @@ export default function DealViewClient({ dealKey }: Props) {
       setInsuranceNeeded(prev);
     } finally {
       setInsuranceSaving(false);
+    }
+  }
+
+  async function uploadInsuranceDocument(file: File) {
+    if (!dealKey) throw new Error("Missing deal id");
+
+    setInsuranceUploadSaving(true);
+    setInsuranceErr(null);
+    setInsuranceSendMsg(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealKey)}/insurance-document`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `Failed to upload insurance document (${res.status})`);
+      }
+
+      const nextDeal = json?.deal ?? deal;
+      setDeal(nextDeal ?? null);
+      return nextDeal;
+    } finally {
+      setInsuranceUploadSaving(false);
+    }
+  }
+
+  function requestInsuranceDocumentUpload(mode: "toggle-on" | "replace") {
+    insuranceUploadModeRef.current = mode;
+    insuranceFileInputRef.current?.click();
+  }
+
+  async function handleInsuranceFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const mode = insuranceUploadModeRef.current;
+    e.target.value = "";
+    insuranceUploadModeRef.current = null;
+
+    if (!file || !mode) return;
+
+    try {
+      const uploadedDeal = await uploadInsuranceDocument(file);
+      if (mode === "toggle-on") {
+        setInsuranceNeeded(true);
+        await saveInsurance(true, insuranceNeeded, uploadedDeal);
+        return;
+      }
+      setInsuranceSendMsg({ type: "ok", text: "Insurance document uploaded." });
+    } catch (e: any) {
+      if (mode === "toggle-on") setInsuranceNeeded(false);
+      setInsuranceErr(e?.message || "Failed to upload insurance document");
     }
   }
 
@@ -887,27 +957,58 @@ export default function DealViewClient({ dealKey }: Props) {
 
         {showInsuranceToggle ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-4">
+            <input
+              ref={insuranceFileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+              className="hidden"
+              onChange={handleInsuranceFileChange}
+            />
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-[11px] font-extrabold text-black/45">Insurance Needed</div>
                 <div className="text-sm font-semibold text-black/70">
-                  Turn on to mark insurance needed and send the insurance webhook.
+                  Turn on to mark insurance needed, send the insurance webhook, and upload the insurance document.
                 </div>
+                {String((deal as any)?.insurance_document_name ?? "").trim() ? (
+                  <div className="mt-2 text-xs font-semibold text-black/60">
+                    Document: {String((deal as any)?.insurance_document_name).trim()}
+                    {String((deal as any)?.insurance_document_uploaded_at ?? "").trim()
+                      ? ` · Uploaded ${new Date(String((deal as any)?.insurance_document_uploaded_at)).toLocaleString("en-ZA")}`
+                      : ""}
+                  </div>
+                ) : null}
               </div>
-              <label className="flex items-center gap-2 text-sm font-extrabold text-black">
-                <input
-                  type="checkbox"
-                  checked={insuranceNeeded}
-                  disabled={insuranceSaving || insuranceSendSaving}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    const prev = insuranceNeeded;
-                    setInsuranceNeeded(next);
-                    saveInsurance(next, prev);
-                  }}
-                />
-                {insuranceNeeded ? "Yes" : "No"}
-              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {insuranceNeeded ? (
+                  <button
+                    type="button"
+                    onClick={() => requestInsuranceDocumentUpload("replace")}
+                    disabled={insuranceSaving || insuranceSendSaving || insuranceUploadSaving}
+                    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-extrabold text-black hover:border-black/20 disabled:opacity-60"
+                  >
+                    {insuranceUploadSaving ? "Uploading..." : "Replace document"}
+                  </button>
+                ) : null}
+                <label className="flex items-center gap-2 text-sm font-extrabold text-black">
+                  <input
+                    type="checkbox"
+                    checked={insuranceNeeded}
+                    disabled={insuranceSaving || insuranceSendSaving || insuranceUploadSaving}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      const prev = insuranceNeeded;
+                      if (!next) {
+                        setInsuranceNeeded(false);
+                        saveInsurance(false, prev);
+                        return;
+                      }
+                      requestInsuranceDocumentUpload("toggle-on");
+                    }}
+                  />
+                  {insuranceNeeded ? "Yes" : "No"}
+                </label>
+              </div>
             </div>
             {insuranceErr ? (
               <div className="mt-2 text-xs font-semibold text-red-600">{insuranceErr}</div>

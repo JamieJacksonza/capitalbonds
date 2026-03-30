@@ -312,6 +312,54 @@ export async function PATCH(req: Request) {
   const insuranceParsed = parseBool(insuranceRaw);
   if (insuranceParsed !== undefined) update.insurance_needed = insuranceParsed;
 
+  const insuranceDocumentBucketRaw =
+    body?.insurance_document_bucket ??
+    body?.insuranceDocumentBucket;
+  if (insuranceDocumentBucketRaw !== undefined) {
+    const v = String(insuranceDocumentBucketRaw || "").trim();
+    update.insurance_document_bucket = v ? v : null;
+  }
+
+  const insuranceDocumentPathRaw =
+    body?.insurance_document_path ??
+    body?.insuranceDocumentPath;
+  if (insuranceDocumentPathRaw !== undefined) {
+    const v = String(insuranceDocumentPathRaw || "").trim();
+    update.insurance_document_path = v ? v : null;
+  }
+
+  const insuranceDocumentNameRaw =
+    body?.insurance_document_name ??
+    body?.insuranceDocumentName;
+  if (insuranceDocumentNameRaw !== undefined) {
+    const v = String(insuranceDocumentNameRaw || "").trim();
+    update.insurance_document_name = v ? v : null;
+  }
+
+  const insuranceDocumentMimeTypeRaw =
+    body?.insurance_document_mime_type ??
+    body?.insuranceDocumentMimeType;
+  if (insuranceDocumentMimeTypeRaw !== undefined) {
+    const v = String(insuranceDocumentMimeTypeRaw || "").trim();
+    update.insurance_document_mime_type = v ? v : null;
+  }
+
+  const insuranceDocumentSizeRaw =
+    body?.insurance_document_size ??
+    body?.insuranceDocumentSize;
+  if (insuranceDocumentSizeRaw !== undefined) {
+    const n = Number(insuranceDocumentSizeRaw);
+    update.insurance_document_size = Number.isFinite(n) ? n : null;
+  }
+
+  const insuranceDocumentUploadedAtRaw =
+    body?.insurance_document_uploaded_at ??
+    body?.insuranceDocumentUploadedAt;
+  if (insuranceDocumentUploadedAtRaw !== undefined) {
+    const v = String(insuranceDocumentUploadedAtRaw || "").trim();
+    update.insurance_document_uploaded_at = v ? v : null;
+  }
+
   // allowlist instructed / registration fields (kept safe)
   const reg = body?.registration && typeof body.registration === "object" ? body.registration : null;
 

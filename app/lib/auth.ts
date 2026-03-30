@@ -27,6 +27,19 @@ function authSecret() {
   return "dev-secret-change-me";
 }
 
+function shouldUseSecureCookie() {
+  const explicit = String(process.env.AUTH_COOKIE_SECURE || "").trim().toLowerCase();
+  if (explicit === "true" || explicit === "1" || explicit === "yes") return true;
+  if (explicit === "false" || explicit === "0" || explicit === "no") return false;
+
+  const appUrl = String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "").trim().toLowerCase();
+  if (appUrl.startsWith("http://localhost") || appUrl.startsWith("http://127.0.0.1")) {
+    return false;
+  }
+
+  return process.env.NODE_ENV === "production";
+}
+
 export function getUsers(): Array<{ name: string; email: string; password: string; role: Role }> {
   const raw = env("AUTH_USERS_JSON");
   if (!raw) return DEFAULT_USERS;
@@ -115,11 +128,11 @@ export function requireAdmin(req: Request): User {
 }
 
 export function makeSetCookie(token: string) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secure = shouldUseSecureCookie() ? "; Secure" : "";
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export function makeClearCookie() {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secure = shouldUseSecureCookie() ? "; Secure" : "";
   return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }

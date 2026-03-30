@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import MoveDealInline from "./MoveDealInline";
 import { useDeals } from "./useDeals";
@@ -239,10 +239,13 @@ export default function StageTable({ stage }: { stage: Stage }) {
   const showInsuranceColumn = ["submitted", "aip", "granted", "instructed"].includes(normalized);
   const [statusFilter, setStatusFilter] = useState("all");
   const [insuranceSavingById, setInsuranceSavingById] = useState<Record<string, boolean>>({});
+  const [insuranceUploadSavingById, setInsuranceUploadSavingById] = useState<Record<string, boolean>>({});
   const [insuranceById, setInsuranceById] = useState<Record<string, boolean>>({});
   const [insuranceMsgById, setInsuranceMsgById] = useState<
     Record<string, { type: "ok" | "err"; text: string }>
   >({});
+  const insuranceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingInsuranceUploadRef = useRef<{ deal: any; mode: "toggle-on" | "replace" } | null>(null);
 
   useEffect(() => {
     try {
@@ -328,7 +331,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
     return normalizeInsurance(d?.insurance_needed ?? d?.insuranceNeeded);
   }
 
-  async function toggleInsurance(d: any, next: boolean) {
+  async function toggleInsurance(d: any, next: boolean, dealOverride?: any) {
     const id = String(d?.id ?? "").trim();
     if (!id) return;
 
@@ -353,11 +356,12 @@ export default function StageTable({ stage }: { stage: Stage }) {
       setInsuranceById((prev) => ({ ...prev, [id]: next }));
 
       if (next) {
+        const webhookDeal = patchJson?.deal ?? dealOverride ?? { ...d, insurance_needed: next };
         const webhookRes = await fetch("/api/webhooks/insurance", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            deal: patchJson?.deal ?? { ...d, insurance_needed: next },
+            deal: webhookDeal,
             source: "stage_table_toggle",
           }),
         });
@@ -365,7 +369,7 @@ export default function StageTable({ stage }: { stage: Stage }) {
         if (!webhookRes.ok || webhookJson?.ok === false) {
           throw new Error(webhookJson?.error || `Insurance webhook failed (${webhookRes.status})`);
         }
-        setInsuranceMsgById((prev) => ({ ...prev, [id]: { type: "ok", text: "Webhook sent" } }));
+        setInsuranceMsgById((prev) => ({ ...prev, [id]: { type: "ok", text: "Document uploaded and webhook sent" } }));
       }
 
       await refreshAll?.();
@@ -377,6 +381,71 @@ export default function StageTable({ stage }: { stage: Stage }) {
       }));
     } finally {
       setInsuranceSavingById((prev) => ({ ...prev, [id]: false }));
+    }
+  }
+
+  async function uploadInsuranceDocument(id: string, file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`/api/deals/${encodeURIComponent(id)}/insurance-document`, {
+      method: "POST",
+      body: formData,
+    });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || json?.ok === false) {
+      throw new Error(json?.error || `Failed to upload insurance document (${res.status})`);
+    }
+    return json;
+  }
+
+  function requestInsuranceDocument(deal: any, mode: "toggle-on" | "replace") {
+    pendingInsuranceUploadRef.current = { deal, mode };
+    insuranceFileInputRef.current?.click();
+  }
+
+  async function handleInsuranceFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const pending = pendingInsuranceUploadRef.current;
+    e.target.value = "";
+    pendingInsuranceUploadRef.current = null;
+
+    if (!file || !pending) return;
+
+    const deal = pending.deal;
+    const id = String(deal?.id ?? "").trim();
+    if (!id) return;
+
+    setInsuranceUploadSavingById((prev) => ({ ...prev, [id]: true }));
+    setInsuranceMsgById((prev) => {
+      const nextMap = { ...prev };
+      delete nextMap[id];
+      return nextMap;
+    });
+
+    try {
+      const json = await uploadInsuranceDocument(id, file);
+      const uploadedDeal = json?.deal ?? deal;
+      if (pending.mode === "toggle-on") {
+        setInsuranceById((prev) => ({ ...prev, [id]: true }));
+        await toggleInsurance(uploadedDeal, true, uploadedDeal);
+      } else {
+        setInsuranceMsgById((prev) => ({
+          ...prev,
+          [id]: { type: "ok", text: "Insurance document uploaded" },
+        }));
+        await refreshAll?.();
+      }
+    } catch (e: any) {
+      if (pending.mode === "toggle-on") {
+        setInsuranceById((prev) => ({ ...prev, [id]: false }));
+      }
+      setInsuranceMsgById((prev) => ({
+        ...prev,
+        [id]: { type: "err", text: e?.message || "Failed to upload insurance document" },
+      }));
+    } finally {
+      setInsuranceUploadSavingById((prev) => ({ ...prev, [id]: false }));
     }
   }
 
@@ -404,6 +473,13 @@ export default function StageTable({ stage }: { stage: Stage }) {
 
   return (
     <div className="mx-auto w-full max-w-none space-y-4 px-2 py-4 md:px-3 md:py-6 xl:px-4">
+      <input
+        ref={insuranceFileInputRef}
+        type="file"
+        accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+        className="hidden"
+        onChange={handleInsuranceFileChange}
+      />
       <div className="mb-10 flex justify-center">
         <img
           src="/ccb-crm-banner-logo-333.png"
@@ -569,22 +645,51 @@ export default function StageTable({ stage }: { stage: Stage }) {
 
                       {showInsuranceColumn ? (
                         <td className="px-4 py-4">
-                          <label className="flex items-center gap-2 text-xs font-extrabold text-black">
-                            <input
-                              type="checkbox"
-                              checked={dealInsuranceOn(d)}
-                              disabled={insuranceSavingById[String(d?.id ?? "").trim()] === true}
-                              onChange={(e) => {
-                                const next = e.target.checked;
-                                setInsuranceById((prev) => ({
-                                  ...prev,
-                                  [String(d?.id ?? "").trim()]: next,
-                                }));
-                                toggleInsurance(d, next);
-                              }}
-                            />
-                            {dealInsuranceOn(d) ? "On" : "Off"}
-                          </label>
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <label className="flex items-center gap-2 text-xs font-extrabold text-black">
+                                <input
+                                  type="checkbox"
+                                  checked={dealInsuranceOn(d)}
+                                  disabled={
+                                    insuranceSavingById[String(d?.id ?? "").trim()] === true ||
+                                    insuranceUploadSavingById[String(d?.id ?? "").trim()] === true
+                                  }
+                                  onChange={(e) => {
+                                    const next = e.target.checked;
+                                    const id = String(d?.id ?? "").trim();
+                                    if (!next) {
+                                      setInsuranceById((prev) => ({ ...prev, [id]: false }));
+                                      toggleInsurance(d, false);
+                                      return;
+                                    }
+                                    requestInsuranceDocument(d, "toggle-on");
+                                  }}
+                                />
+                                {dealInsuranceOn(d) ? "On" : "Off"}
+                              </label>
+                              {dealInsuranceOn(d) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => requestInsuranceDocument(d, "replace")}
+                                  disabled={
+                                    insuranceSavingById[String(d?.id ?? "").trim()] === true ||
+                                    insuranceUploadSavingById[String(d?.id ?? "").trim()] === true
+                                  }
+                                  className="rounded-xl border border-black/10 bg-white px-2.5 py-1 text-[10px] font-extrabold text-black hover:border-black/20 disabled:opacity-60"
+                                >
+                                  {insuranceUploadSavingById[String(d?.id ?? "").trim()] === true
+                                    ? "Uploading..."
+                                    : "Replace doc"}
+                                </button>
+                              ) : null}
+                            </div>
+                            {String(d?.insurance_document_name ?? "").trim() ? (
+                              <div className="text-[11px] font-semibold text-black/55">
+                                {String(d?.insurance_document_name).trim()}
+                              </div>
+                            ) : null}
+                          </div>
                           {insuranceMsgById[String(d?.id ?? "").trim()] ? (
                             <div
                               className={
