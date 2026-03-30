@@ -139,24 +139,26 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!match) {
-      const users = getUsers();
-      match =
-        users.find((u) => email && u.email.toLowerCase() === email) ||
-        users.find((u) => email && u.name.toLowerCase() === email.toLowerCase()) ||
-        users.find((u) => legacyName && u.name.toLowerCase() === legacyName.toLowerCase()) ||
-        null;
+    const users = getUsers();
+    const fallbackMatch =
+      users.find((u) => email && u.email.toLowerCase() === email) ||
+      users.find((u) => email && u.name.toLowerCase() === email.toLowerCase()) ||
+      users.find((u) => legacyName && u.name.toLowerCase() === legacyName.toLowerCase()) ||
+      null;
+
+    const passwordMatches = (row: AuthRow | null) => {
+      if (!row) return false;
+      const storedPassword = pickPassword(row);
+      if (storedPassword && storedPassword !== password) return false;
+      if (!storedPassword && password) return false;
+      return true;
+    };
+
+    if (!passwordMatches(match)) {
+      match = passwordMatches(fallbackMatch) ? fallbackMatch : null;
     }
 
     if (!match) return Response.json({ ok: false, error: "Invalid login" }, { status: 401 });
-
-    const storedPassword = pickPassword(match);
-    if (storedPassword && storedPassword !== password) {
-      return Response.json({ ok: false, error: "Invalid login" }, { status: 401 });
-    }
-    if (!storedPassword && password) {
-      return Response.json({ ok: false, error: "Invalid login" }, { status: 401 });
-    }
 
     const resolvedName = String(match.name || legacyName || email || "User").trim();
     const resolvedEmail = String(match.email || email || "").trim().toLowerCase();
