@@ -6,6 +6,7 @@ export type User = { name: string; email?: string; role: Role };
 const COOKIE_NAME = "cb_session";
 
 const DEFAULT_USERS: Array<{ name: string; email: string; password: string; role: Role }> = [
+  { name: "Devan", email: "devan@capitalbonds.co.za", password: "123456", role: "admin" },
   { name: "Kristie", email: "kristie@capitalbonds.local", password: "Kristie123!", role: "consultant" },
   { name: "Elmarie", email: "elmarie@capitalbonds.local", password: "Elmarie123!", role: "consultant" },
   { name: "Cindy", email: "cindy@capitalbonds.local", password: "Cindy123!", role: "consultant" },
