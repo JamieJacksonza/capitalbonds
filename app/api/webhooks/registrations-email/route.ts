@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -13,8 +16,22 @@ function json(data: any, status = 200) {
   });
 }
 
+function readEnvFileValue(name: string) {
+  try {
+    const envPath = path.join(process.cwd(), ".env.local");
+    const text = fs.readFileSync(envPath, "utf8");
+    const match = text.match(new RegExp(`^${name}="?([^"\\r\\n]+)"?$`, "m"));
+    return match?.[1]?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
 export async function POST(req: Request) {
-  const url = process.env.MAKE_REGISTRATIONS_EMAIL_WEBHOOK_URL || "";
+  const url =
+    process.env.MAKE_REGISTRATIONS_EMAIL_WEBHOOK_URL ||
+    readEnvFileValue("MAKE_REGISTRATIONS_EMAIL_WEBHOOK_URL") ||
+    "https://hook.us2.make.com/4xoil8l0oduxjrpb5vtlqiws6v8lr5c9";
   if (!url) {
     return json({ ok: false, error: "Missing MAKE_REGISTRATIONS_EMAIL_WEBHOOK_URL" }, 500);
   }
