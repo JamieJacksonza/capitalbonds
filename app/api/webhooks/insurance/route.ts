@@ -31,6 +31,12 @@ function getInlineSizeLimitBytes() {
   return Number.isFinite(raw) && raw > 0 ? raw : 3 * 1024 * 1024;
 }
 
+function shouldIncludeInlineFile() {
+  const raw = String(process.env.MAKE_INSURANCE_INCLUDE_INLINE_FILE || "").trim().toLowerCase();
+  if (!raw) return true;
+  return raw !== "0" && raw !== "false" && raw !== "no";
+}
+
 async function buildInsuranceDocumentPayload(deal: any) {
   const bucket = String(
     deal?.insurance_document_bucket ??
@@ -75,14 +81,16 @@ async function buildInsuranceDocumentPayload(deal: any) {
       signedUrl = signed.data.signedUrl;
     }
 
-    const downloaded = await supabase.storage.from(bucket).download(path);
-    if (!downloaded.error && downloaded.data) {
-      const buffer = Buffer.from(await downloaded.data.arrayBuffer());
-      if (buffer.byteLength <= getInlineSizeLimitBytes()) {
-        base64 = buffer.toString("base64");
-        const safeMimeType = mimeType || "application/octet-stream";
-        dataUrl = `data:${safeMimeType};base64,${base64}`;
-        inlineIncluded = true;
+    if (shouldIncludeInlineFile()) {
+      const downloaded = await supabase.storage.from(bucket).download(path);
+      if (!downloaded.error && downloaded.data) {
+        const buffer = Buffer.from(await downloaded.data.arrayBuffer());
+        if (buffer.byteLength <= getInlineSizeLimitBytes()) {
+          base64 = buffer.toString("base64");
+          const safeMimeType = mimeType || "application/octet-stream";
+          dataUrl = `data:${safeMimeType};base64,${base64}`;
+          inlineIncluded = true;
+        }
       }
     }
   } catch {}
