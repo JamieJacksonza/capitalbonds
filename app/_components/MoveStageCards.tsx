@@ -21,7 +21,7 @@ function nowIso() {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mt-3 rounded-2xl border border-black/10 bg-black/[0.01] p-4">
+    <div className="mt-3 min-w-0 overflow-hidden rounded-2xl border border-black/10 bg-black/[0.01] p-4">
       <div className="text-xs font-extrabold text-black/70">{title}</div>
       <div className="mt-3 space-y-3">{children}</div>
     </div>
@@ -30,7 +30,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="text-[11px] font-extrabold text-black">{label}</div>
       <div className="mt-2">{children}</div>
     </div>
@@ -49,15 +49,15 @@ function NotesBox({
   const [text, setText] = useState("");
 
   return (
-    <div className="rounded-2xl border border-black/10 bg-white p-3">
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-black/10 bg-white p-3">
       <div className="text-[11px] font-extrabold text-black">{title}</div>
 
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex min-w-0 flex-col gap-2 sm:flex-row">
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Add a note..."
-          className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
+          className="min-w-0 w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
         />
         <button
           type="button"
@@ -114,27 +114,33 @@ function BankDetailsBox({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       {banks.map((b, i) => {
         const name = String((b as any)?.bank_name || (b as any)?.bankName || `Bank ${i + 1}`).trim();
         const v = valueByBank[name] ?? "";
         const r = refByBank[name] ?? "";
         return (
-          <div key={name + "_" + i} className="rounded-2xl border border-black/10 bg-white p-3">
+          <div key={name + "_" + i} className="min-w-0 overflow-hidden rounded-2xl border border-black/10 bg-white p-3">
             <div className="text-[11px] font-extrabold text-black">{name}</div>
-            <div className="mt-2">
-              <input
-                value={r}
-                onChange={(e) => onRefChange(name, e.target.value)}
-                placeholder="Reference number"
-                className="mb-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
-              />
+            <div className="mt-2 min-w-0">
+              <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-black/45">
+                Bank Notes
+              </div>
               <textarea
                 value={v}
                 onChange={(e) => onChange(name, e.target.value)}
                 placeholder={label}
-                rows={3}
-                className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
+                rows={4}
+                className="min-h-[112px] min-w-0 w-full max-w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
+              />
+              <div className="mb-2 mt-3 text-[10px] font-extrabold uppercase tracking-[0.12em] text-black/45">
+                Reference Number
+              </div>
+              <input
+                value={r}
+                onChange={(e) => onRefChange(name, e.target.value)}
+                placeholder="Reference number"
+                className="min-w-0 w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black outline-none focus:border-black/30"
               />
             </div>
           </div>
@@ -185,6 +191,20 @@ function parseBankTextMap(text: any) {
     const name = line.slice(0, idx).trim();
     const val = line.slice(idx + 1).trim();
     if (name) out[name] = val;
+  }
+  return out;
+}
+
+function mergeBankTextMaps(...maps: Array<Record<string, string> | null | undefined>) {
+  const out: Record<string, string> = {};
+  for (const map of maps) {
+    if (!map || typeof map !== "object") continue;
+    for (const [rawKey, rawValue] of Object.entries(map)) {
+      const key = String(rawKey ?? "").trim();
+      const value = String(rawValue ?? "");
+      if (!key || !value.trim()) continue;
+      out[key] = value;
+    }
   }
   return out;
 }
@@ -486,18 +506,18 @@ export default function MoveStageCards({
     }
 
     if (stage === "aip") {
-      let combinedBank: Record<string, string> = {
-        ...parsedNotes,
-        ...bankNotesMap,
-        ...dealBanksNotes,
-        ...bankByName,
-      };
-      let combinedRefs: Record<string, string> = {
-        ...parsedRefs,
-        ...bankRefsMap,
-        ...dealBanksRefs,
-        ...bankRefByName,
-      };
+      let combinedBank = mergeBankTextMaps(
+        dealBanksNotes,
+        bankNotesMap,
+        parsedNotes,
+        bankByName
+      );
+      let combinedRefs = mergeBankTextMaps(
+        dealBanksRefs,
+        bankRefsMap,
+        parsedRefs,
+        bankRefByName
+      );
 
       const details = Array.isArray(src?.aip_bank_details) ? src.aip_bank_details : [];
       if (details.length) {

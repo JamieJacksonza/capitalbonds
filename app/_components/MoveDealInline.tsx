@@ -204,7 +204,7 @@ const [msg, setMsg] = useState<Msg | null>(null);
 
       {showStagePrompt ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-4 shadow-xl">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-x-hidden overflow-y-auto rounded-2xl bg-white p-4 shadow-xl">
             <div className="text-sm font-extrabold text-black">Additional details required</div>
             <div className="mt-1 text-xs font-semibold text-black/60">
               Please complete the required inputs for this status.

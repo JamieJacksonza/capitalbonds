@@ -157,9 +157,7 @@ function buildCurrentInfo(deal: any) {
 
 export async function POST(req: Request) {
   const urlPrimary = process.env.MAKE_INSURANCE_WEBHOOK_URL || "";
-  const urlSecondary =
-    process.env.MAKE_INSURANCE_WEBHOOK_URL_2 ||
-    "https://hook.us2.make.com/fsqn5q7p91de37mhs3wfh8rwm1xiublu";
+  const urlSecondary = process.env.MAKE_INSURANCE_WEBHOOK_URL_2 || "";
 
   const urls = Array.from(new Set([urlPrimary, urlSecondary].map((u) => String(u || "").trim()).filter(Boolean)));
   if (!urls.length) {
