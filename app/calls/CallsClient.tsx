@@ -22,7 +22,7 @@ type SaveState = { status: "pending" | "saving" | "saved" | "error"; message?: s
 
 const DEFAULT_CONSULTANTS = ["Elmarie", "Kristie", "Cindy", "Chelsea"];
 const CALL_FIELDS: CallField[] = ["consultant", "name_and_surname", "cell", "email", "agency", "area", "notes"];
-const CALL_EXPORT_HEADERS = ["Consultant", "Name and Surname", "Cell", "Email", "Agency", "Area", "Notes"];
+const CALL_EXPORT_HEADERS = ["Date Added", "Consultant", "Name and Surname", "Cell", "Email", "Agency", "Area", "Notes"];
 
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -96,8 +96,22 @@ function callFieldValue(row: CallRow, field: CallField) {
   return cleanText(row?.[field]);
 }
 
+function formatDateAdded(value: unknown) {
+  const raw = cleanText(value);
+  if (!raw) return "";
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw.slice(0, 10);
+
+  return new Intl.DateTimeFormat("en-ZA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function callSearchText(row: CallRow) {
-  return CALL_FIELDS.map((field) => callFieldValue(row, field)).join(" ").toLowerCase();
+  return [formatDateAdded(row.created_at), ...CALL_FIELDS.map((field) => callFieldValue(row, field))].join(" ").toLowerCase();
 }
 
 function optionsWithCurrent(options: string[], current: string) {
@@ -426,6 +440,7 @@ export default function CallsClient() {
   }, [rows, consultantFilter, query]);
 
   const callsExportRows = filteredRows.map((row) => [
+    formatDateAdded(row.created_at),
     callEditableValue(row, "consultant"),
     callEditableValue(row, "name_and_surname"),
     callEditableValue(row, "cell"),
@@ -635,8 +650,9 @@ export default function CallsClient() {
               onKeyDown={handleCallsGridKeyDown}
               className="max-h-[calc(100vh-285px)] overflow-auto outline-none focus:ring-2 focus:ring-[#142037]/30"
             >
-              <table className="w-full min-w-[1700px] border-collapse text-left">
+              <table className="w-full min-w-[1820px] border-collapse text-left">
                 <colgroup>
+                  <col className="w-[120px]" />
                   <col className="w-[140px]" />
                   <col className="w-[260px]" />
                   <col className="w-[150px]" />
@@ -647,6 +663,7 @@ export default function CallsClient() {
                 </colgroup>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-[#f3f3f3] text-[11px] font-bold text-black">
+                    <th className={callCellBase("bg-[#f3f3f3]")}>{filterLabel("Date Added")}</th>
                     <th className={callCellBase("bg-[#f3f3f3]")}>{filterLabel("Consultant")}</th>
                     <th className={callCellBase("bg-[#f3f3f3]")}>{filterLabel("Name and Surname")}</th>
                     <th className={callCellBase("bg-[#f3f3f3]")}>{filterLabel("Cell")}</th>
@@ -659,7 +676,7 @@ export default function CallsClient() {
                 <tbody>
                   {filteredRows.length === 0 ? (
                     <tr>
-                      <td className={callCellBase("text-center font-semibold text-black/50")} colSpan={7}>
+                      <td className={callCellBase("text-center font-semibold text-black/50")} colSpan={8}>
                         No calls found.
                       </td>
                     </tr>
@@ -677,6 +694,9 @@ export default function CallsClient() {
 
                       return (
                         <tr key={rowKey} className={cls("bg-white hover:bg-[#fffce8]", startsGroup && "border-t-2 border-black/50")}>
+                          <td className={callCellBase("whitespace-nowrap font-semibold text-black/75")}>
+                            {formatDateAdded(row.created_at)}
+                          </td>
                           <td className={callCellBase("text-black")}>
                             <EditableSelect
                               value={callEditableValue(row, "consultant")}
