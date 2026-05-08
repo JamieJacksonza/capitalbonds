@@ -23,6 +23,8 @@ export default function NewSubmissionPage() {
 
   const [dealOpsNumber, setDealOpsNumber] = useState("");
   const [applicant, setApplicant] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientCellphone, setClientCellphone] = useState("");
   const [consultantOptions, setConsultantOptions] = useState<string[]>([...DEFAULT_CONSULTANTS]);
   const [consultant, setConsultant] = useState<string>(DEFAULT_CONSULTANTS[0] ?? "");
   const [agent, setAgent] = useState<string>("");
@@ -80,6 +82,8 @@ export default function NewSubmissionPage() {
 
     const dc = toUpperSafe(dealOpsNumber);
     const ap = String(applicant || "").trim();
+    const email = String(clientEmail || "").trim();
+    const cellphone = String(clientCellphone || "").trim();
     const con = String(consultant || "").trim();
     const ag = String(agent || "").trim();
     const dt = String(submittedDate || "").trim();
@@ -109,6 +113,8 @@ export default function NewSubmissionPage() {
         amount_zar: amountNum,
         purchase_price: Number.isFinite(purchasePriceNum) ? purchasePriceNum : undefined,
         client_main_bank: bank || undefined,
+        client_email: email || undefined,
+        client_cellphone: cellphone || undefined,
         stage: "submitted",
         submitted_date: dt,
         bond_due_date: bondDueDate ? String(bondDueDate).trim() : undefined,
@@ -217,6 +223,28 @@ export default function NewSubmissionPage() {
               value={applicant}
               onChange={(e) => setApplicant(e.target.value)}
               placeholder="Full name"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black/70">Client Email</div>
+            <input
+              type="email"
+              value={clientEmail}
+              onChange={(e) => setClientEmail(e.target.value)}
+              placeholder="client@example.com"
+              className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-extrabold text-black/70">Client Cellphone</div>
+            <input
+              type="tel"
+              value={clientCellphone}
+              onChange={(e) => setClientCellphone(e.target.value)}
+              placeholder="e.g. 0821234567"
               className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-3 text-sm font-semibold text-black outline-none focus:border-black/30"
             />
           </div>

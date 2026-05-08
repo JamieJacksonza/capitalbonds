@@ -29,6 +29,73 @@ function isAdminSession(session: any) {
   return String(session?.role || "").toLowerCase() === "admin";
 }
 
+function shouldIgnoreRelatedTableError(error: any) {
+  const msg = String(error?.message || "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("relationship") ||
+    msg.includes("schema cache")
+  );
+}
+
+async function loadRelatedRows(sb: any, dealIds: string[]) {
+  if (!dealIds.length) return { dealBanks: [], bankNotes: [] };
+
+  const [dealBanksRes, bankNotesRes] = await Promise.all([
+    sb
+      .from("deal_banks")
+      .select("*")
+      .in("deal_id", dealIds),
+    sb
+      .from("bank_notes")
+      .select("id, deal_id, stage, bank_name, bank_notes, bank_reference, updated_at")
+      .in("deal_id", dealIds),
+  ]);
+
+  if (dealBanksRes.error && !shouldIgnoreRelatedTableError(dealBanksRes.error)) {
+    console.warn("DEALS_LIST_DEAL_BANKS_ERROR:", dealBanksRes.error);
+  }
+
+  if (bankNotesRes.error && !shouldIgnoreRelatedTableError(bankNotesRes.error)) {
+    console.warn("DEALS_LIST_BANK_NOTES_ERROR:", bankNotesRes.error);
+  }
+
+  return {
+    dealBanks: dealBanksRes.error ? [] : dealBanksRes.data ?? [],
+    bankNotes: bankNotesRes.error ? [] : bankNotesRes.data ?? [],
+  };
+}
+
+function attachRelatedRows(deals: any[], dealBanks: any[], bankNotes: any[]) {
+  const banksByDeal = new Map<string, any[]>();
+  const notesByDeal = new Map<string, any[]>();
+
+  for (const row of dealBanks) {
+    const dealId = String(row?.deal_id || "").trim();
+    if (!dealId) continue;
+    banksByDeal.set(dealId, [...(banksByDeal.get(dealId) || []), row]);
+  }
+
+  for (const row of bankNotes) {
+    const dealId = String(row?.deal_id || "").trim();
+    if (!dealId) continue;
+    notesByDeal.set(dealId, [...(notesByDeal.get(dealId) || []), row]);
+  }
+
+  return deals.map((deal) => {
+    const dealId = String(deal?.id || "").trim();
+    const deal_banks = dealId ? banksByDeal.get(dealId) || [] : [];
+    const bank_notes_rows = dealId ? notesByDeal.get(dealId) || [] : [];
+
+    return {
+      ...deal,
+      deal_banks,
+      bank_notes_rows,
+      banks: Array.isArray(deal?.banks) && deal.banks.length ? deal.banks : deal_banks,
+    };
+  });
+}
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: { ...corsHeaders(), Allow: "GET,POST,OPTIONS" } });
 }
@@ -47,17 +114,22 @@ export async function GET(req: Request) {
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (!isAdminSession(session)) {
-      query = query.ilike("consultant", String(session.name || "").trim());
-    }
-
     const { data, error } = await query;
 
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500, headers: corsHeaders() });
     }
 
-    return NextResponse.json({ ok: true, deals: data ?? [] }, { status: 200, headers: corsHeaders() });
+    const deals = data ?? [];
+    const dealIds = deals
+      .map((deal: any) => String(deal?.id || "").trim())
+      .filter(Boolean);
+    const related = await loadRelatedRows(sb, dealIds);
+
+    return NextResponse.json(
+      { ok: true, deals: attachRelatedRows(deals, related.dealBanks, related.bankNotes) },
+      { status: 200, headers: corsHeaders() }
+    );
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Server error";
     if (message.includes("Missing env vars")) {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { exportRowsToExcel, exportRowsToPdf } from "@/app/lib/exportDeals";
 
 type PipelineRow = {
   id?: string;
@@ -20,7 +21,60 @@ type PipelineRow = {
   follow_up_date: string;
 };
 
+type PipelineField =
+  | "lead_date"
+  | "lead_type"
+  | "consultant"
+  | "agent"
+  | "lead_source"
+  | "client_name"
+  | "client_email"
+  | "client_cellphone"
+  | "loan_amount"
+  | "bond_amount"
+  | "purchase_price"
+  | "follow_up_date"
+  | "notes";
+
+type SaveState = { status: "pending" | "saving" | "saved" | "error"; message?: string };
+
 const DUMMY_ROWS: PipelineRow[] = [];
+const PIPELINE_FIELD_OPTIONS: Partial<Record<PipelineField, string[]>> = {
+  lead_type: ["", "New App", "Pre-approval"],
+  lead_source: ["", "Website", "Inbound call", "Outbound call", "Agent"],
+};
+
+const PIPELINE_EXPORT_HEADERS = [
+  "Lead Date",
+  "Lead Type",
+  "Consultant",
+  "Agent",
+  "Lead Source",
+  "Client Name",
+  "Client Email",
+  "Client Cellphone",
+  "Loan Amount",
+  "Bond Amount",
+  "Purchase Price",
+  "Follow Up Date",
+  "Notes",
+];
+
+const PIPELINE_FIELDS: PipelineField[] = [
+  "lead_date",
+  "lead_type",
+  "consultant",
+  "agent",
+  "lead_source",
+  "client_name",
+  "client_email",
+  "client_cellphone",
+  "loan_amount",
+  "bond_amount",
+  "purchase_price",
+  "follow_up_date",
+  "notes",
+];
 
 
 function dateLabel(v: string) {
@@ -31,6 +85,228 @@ function dateLabel(v: string) {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yy = String(d.getFullYear()).slice(-2);
   return `${day} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(mm) - 1]} ${yy}`;
+}
+
+function cleanText(v: unknown) {
+  const s = String(v ?? "").trim();
+  if (!s || s === "-" || s.toLowerCase() === "null" || s.toLowerCase() === "undefined") return "";
+  return s.replace(/\r\n/g, "\n").trim();
+}
+
+function toMoneyNumber(v: unknown) {
+  const raw = String(v ?? "").replace(/[^\d.-]/g, "");
+  if (!raw) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function moneyZar(v: unknown) {
+  const n = toMoneyNumber(v);
+  if (!n) return "";
+  return `R${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n)}`;
+}
+
+function normalizeDateInput(v: unknown) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function filterLabel(label: string) {
+  return (
+    <span className="flex items-center justify-between gap-2">
+      <span>{label}</span>
+      <span className="text-[8px] leading-none text-black/55">v</span>
+    </span>
+  );
+}
+
+function pipelineCellBase(extra = "") {
+  return `border border-black/70 px-1.5 py-[3px] align-top text-[11px] leading-[1.2] ${extra}`;
+}
+
+function statusClass(state?: SaveState, extra = "") {
+  if (state?.status === "error") return `${extra} bg-red-50 outline outline-1 outline-red-500`;
+  if (state?.status === "saved") return `${extra} bg-emerald-50`;
+  if (state?.status === "saving") return `${extra} bg-sky-50`;
+  if (state?.status === "pending") return `${extra} bg-yellow-50`;
+  return extra;
+}
+
+function SaveMarker({ state }: { state?: SaveState }) {
+  if (!state) return null;
+  const label =
+    state.status === "pending"
+      ? "pending"
+      : state.status === "saving"
+      ? "saving"
+      : state.status === "saved"
+      ? "saved"
+      : "error";
+  const color =
+    state.status === "error"
+      ? "text-red-700"
+      : state.status === "saved"
+      ? "text-emerald-700"
+      : state.status === "saving"
+      ? "text-sky-700"
+      : "text-yellow-700";
+
+  return (
+    <span title={state.message || label} className={`absolute bottom-0.5 right-1 text-[8px] font-bold uppercase ${color}`}>
+      {label}
+    </span>
+  );
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
+}
+
+function pipelineCellKey(id: string, field: PipelineField) {
+  return `${id}:pipeline:${field}`;
+}
+
+function pipelineFieldValue(row: PipelineRow, field: PipelineField) {
+  if (field === "lead_date" || field === "follow_up_date") return normalizeDateInput(row?.[field]);
+  if (field === "loan_amount" || field === "bond_amount" || field === "purchase_price") return moneyZar(row?.[field]);
+  return cleanText(row?.[field]);
+}
+
+function pipelinePatchForField(field: PipelineField, value: string) {
+  const text = value.trim();
+  if (field === "loan_amount" || field === "bond_amount" || field === "purchase_price") {
+    return { [field]: text ? toMoneyNumber(text) : null };
+  }
+  if (field === "lead_date" || field === "follow_up_date") return { [field]: text || null };
+  return { [field]: text || null };
+}
+
+function localPipelinePatchForField(field: PipelineField, value: string) {
+  if (field === "loan_amount" || field === "bond_amount" || field === "purchase_price") {
+    return { [field]: value.trim() };
+  }
+  return { [field]: value };
+}
+
+function pipelineSearchText(row: PipelineRow) {
+  return PIPELINE_FIELDS.map((field) => pipelineFieldValue(row, field)).join(" ").toLowerCase();
+}
+
+function optionsWithCurrent(options: string[], current: string) {
+  if (!current || options.includes(current)) return options;
+  return [current, ...options];
+}
+
+function EditableInput({
+  value,
+  state,
+  onChange,
+  onCommit,
+  type = "text",
+  className = "",
+}: {
+  value: string;
+  state?: SaveState;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  type?: string;
+  className?: string;
+}) {
+  return (
+    <div className="relative min-h-[20px]">
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onCommit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+        className={statusClass(
+          state,
+          `block min-h-[20px] w-full border-0 bg-transparent px-0 py-0 pr-9 text-[11px] font-semibold leading-[1.2] text-black outline-none focus:bg-[#fffbd1] ${className}`
+        )}
+      />
+      <SaveMarker state={state} />
+    </div>
+  );
+}
+
+function EditableTextarea({
+  value,
+  state,
+  onChange,
+  onCommit,
+  className = "",
+}: {
+  value: string;
+  state?: SaveState;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  className?: string;
+}) {
+  return (
+    <div className="relative min-h-[36px]">
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onCommit}
+        rows={2}
+        className={statusClass(
+          state,
+          `block min-h-[36px] w-full resize-y border-0 bg-transparent px-0 py-0 pr-10 text-[11px] font-semibold leading-[1.2] text-black outline-none focus:bg-[#fffbd1] ${className}`
+        )}
+      />
+      <SaveMarker state={state} />
+    </div>
+  );
+}
+
+function EditableSelect({
+  value,
+  state,
+  onChange,
+  options,
+  className = "",
+}: {
+  value: string;
+  state?: SaveState;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  className?: string;
+}) {
+  return (
+    <div className="relative min-h-[20px]">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={statusClass(
+          state,
+          `block min-h-[20px] w-full border-0 bg-transparent px-0 py-0 pr-9 text-[11px] font-semibold leading-[1.2] text-black outline-none focus:bg-[#fffbd1] ${className}`
+        )}
+      >
+        {options.map((option) => (
+          <option key={option.value || "blank"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <SaveMarker state={state} />
+    </div>
+  );
 }
 
 function parseMoneyInput(v: any) {
@@ -92,6 +368,15 @@ export default function PipelinePage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [consultantFilter, setConsultantFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const [followUpsOpen, setFollowUpsOpen] = useState(false);
+  const [pipelineDealsOpen, setPipelineDealsOpen] = useState(true);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
+  const pipelineScrollerRef = useRef<HTMLDivElement | null>(null);
+  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const clearStatusTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [moveForm, setMoveForm] = useState({
     deal_deck_id: "",
     applicant: "",
@@ -151,12 +436,111 @@ export default function PipelinePage() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      Object.values(saveTimersRef.current).forEach((timer) => clearTimeout(timer));
+      Object.values(clearStatusTimersRef.current).forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
+
   function updateForm<K extends keyof typeof form>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
   function updateMoveForm<K extends keyof typeof moveForm>(key: K, value: string) {
     setMoveForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setCellState(key: string, state?: SaveState) {
+    setSaveStates((prev) => {
+      const next = { ...prev };
+      if (state) next[key] = state;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function scheduleClearState(key: string) {
+    clearTimeout(clearStatusTimersRef.current[key]);
+    clearStatusTimersRef.current[key] = setTimeout(() => setCellState(key), 1800);
+  }
+
+  function patchPipelineRow(id: string, patch: Partial<PipelineRow>) {
+    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  function pipelineEditableValue(row: PipelineRow, field: PipelineField) {
+    const id = cleanText(row?.id);
+    const key = pipelineCellKey(id, field);
+    return Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key] : pipelineFieldValue(row, field);
+  }
+
+  async function persistPipelineField(row: PipelineRow, field: PipelineField, value: string) {
+    const id = cleanText(row?.id);
+    if (!id) return;
+    const key = pipelineCellKey(id, field);
+    setCellState(key, { status: "saving" });
+
+    try {
+      const res = await fetch("/api/pipeline", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...pipelinePatchForField(field, value) }),
+      });
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || `Save failed (${res.status})`);
+      const updatedRow = json?.row && typeof json.row === "object" ? json.row : localPipelinePatchForField(field, value);
+      patchPipelineRow(id, updatedRow);
+      setCellState(key, { status: "saved" });
+      scheduleClearState(key);
+    } catch (e: any) {
+      setCellState(key, { status: "error", message: e?.message || "Save failed" });
+    }
+  }
+
+  function queuePipelineSave(row: PipelineRow, field: PipelineField, value: string, delay = 700) {
+    const id = cleanText(row?.id);
+    if (!id) return;
+    const key = pipelineCellKey(id, field);
+    clearTimeout(saveTimersRef.current[key]);
+    setCellState(key, { status: delay > 0 ? "pending" : "saving" });
+    saveTimersRef.current[key] = setTimeout(() => persistPipelineField(row, field, value), delay);
+  }
+
+  function updatePipelineCell(row: PipelineRow, field: PipelineField, value: string, immediate = false) {
+    const id = cleanText(row?.id);
+    if (!id) return;
+    const key = pipelineCellKey(id, field);
+    setDrafts((prev) => ({ ...prev, [key]: value }));
+    patchPipelineRow(id, localPipelinePatchForField(field, value));
+    queuePipelineSave(row, field, value, immediate ? 0 : 700);
+  }
+
+  function scrollPipelineSheet(axis: "horizontal" | "vertical", direction: -1 | 1, largeStep = false) {
+    const scroller = pipelineScrollerRef.current;
+    if (!scroller) return;
+    const size = axis === "horizontal" ? scroller.clientWidth : scroller.clientHeight;
+    const distance = largeStep ? Math.max(320, size * 0.75) : 180;
+    scroller.scrollBy({
+      left: axis === "horizontal" ? direction * distance : 0,
+      top: axis === "vertical" ? direction * distance : 0,
+      behavior: "auto",
+    });
+  }
+
+  function handlePipelineGridKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      scrollPipelineSheet("horizontal", event.key === "ArrowRight" ? 1 : -1, event.shiftKey);
+    } else {
+      scrollPipelineSheet("vertical", event.key === "ArrowDown" ? 1 : -1, event.shiftKey);
+    }
+    event.stopPropagation();
+
+    if (!isEditableKeyboardTarget(event.target)) {
+      event.preventDefault();
+    }
   }
 
   function openMove(lead: PipelineRow) {
@@ -365,12 +749,21 @@ export default function PipelinePage() {
     }
   }
 
+  const pipelineConsultantOptions = useMemo(() => {
+    const names = (rows || []).map((row) => cleanText(row.consultant)).filter(Boolean);
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     const list = rows || [];
+    const q = query.trim().toLowerCase();
     return list.filter((r) => {
       const typeOk = typeFilter ? String(r.lead_type || "") === typeFilter : true;
+      const consultantOk = consultantFilter ? cleanText(r.consultant).toLowerCase() === consultantFilter.toLowerCase() : true;
       const rawDate = String(r.lead_date || "").trim();
-      if (!fromDate && !toDate) return typeOk;
+      const textOk = q ? pipelineSearchText(r).includes(q) : true;
+      if (!typeOk || !consultantOk || !textOk) return false;
+      if (!fromDate && !toDate) return true;
       if (!rawDate) return false;
       const d = new Date(rawDate);
       if (Number.isNaN(d.getTime())) return false;
@@ -378,9 +771,9 @@ export default function PipelinePage() {
       const to = toDate ? new Date(`${toDate}T23:59:59`) : null;
       if (from && d < from) return false;
       if (to && d > to) return false;
-      return typeOk;
+      return true;
     });
-  }, [rows, fromDate, toDate, typeFilter]);
+  }, [rows, fromDate, toDate, typeFilter, consultantFilter, query]);
 
   const followUpRows = useMemo(() => {
     return (rows || []).filter((r) => {
@@ -395,6 +788,22 @@ export default function PipelinePage() {
       return da.getTime() - db.getTime();
     });
   }, [rows]);
+
+  const pipelineExportRows = filteredRows.map((row) => [
+    pipelineEditableValue(row, "lead_date"),
+    pipelineEditableValue(row, "lead_type"),
+    pipelineEditableValue(row, "consultant"),
+    pipelineEditableValue(row, "agent"),
+    pipelineEditableValue(row, "lead_source"),
+    pipelineEditableValue(row, "client_name"),
+    pipelineEditableValue(row, "client_email"),
+    pipelineEditableValue(row, "client_cellphone"),
+    pipelineEditableValue(row, "loan_amount"),
+    pipelineEditableValue(row, "bond_amount"),
+    pipelineEditableValue(row, "purchase_price"),
+    pipelineEditableValue(row, "follow_up_date"),
+    pipelineEditableValue(row, "notes"),
+  ]);
 
   return (
     <div className="mx-auto w-full max-w-none space-y-6 px-2 py-4 md:px-3 md:py-6 xl:px-4">
@@ -412,92 +821,162 @@ export default function PipelinePage() {
         </a>
       </div>
 
-      <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
-        <div className="text-[11px] font-extrabold text-black/60">Filters</div>
-        <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="border-b border-black/10 bg-[#f8fafc] px-4 py-2.5">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[#142037]/65">Filters</div>
+        </div>
+        <div className="flex flex-wrap items-end gap-2 px-4 py-3">
           <label className="grid gap-1">
-            <span className="text-[11px] font-extrabold text-black/60">From</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-black/55">Search</span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Client, agent, notes"
+              className="h-8 w-[190px] rounded-lg border border-black/10 bg-white px-2 text-[11px] font-bold text-black outline-none placeholder:text-black/35 focus:border-[#142037]/40 focus:ring-2 focus:ring-[#142037]/10"
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-black/55">From</span>
             <input
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              className="rounded-xl border border-black/10 px-3 py-2 text-xs font-extrabold text-black outline-none focus:border-black/30"
+              className="h-8 w-[138px] rounded-lg border border-black/10 bg-white px-2 text-[11px] font-bold text-black outline-none focus:border-[#142037]/40 focus:ring-2 focus:ring-[#142037]/10"
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] font-extrabold text-black/60">To</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-black/55">To</span>
             <input
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
-              className="rounded-xl border border-black/10 px-3 py-2 text-xs font-extrabold text-black outline-none focus:border-black/30"
+              className="h-8 w-[138px] rounded-lg border border-black/10 bg-white px-2 text-[11px] font-bold text-black outline-none focus:border-[#142037]/40 focus:ring-2 focus:ring-[#142037]/10"
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] font-extrabold text-black/60">Lead Type</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-black/55">Lead Type</span>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="rounded-xl border border-black/10 px-3 py-2 text-xs font-extrabold text-black outline-none focus:border-black/30"
+              className="h-8 w-[150px] rounded-lg border border-black/10 bg-white px-2 text-[11px] font-bold text-black outline-none focus:border-[#142037]/40 focus:ring-2 focus:ring-[#142037]/10"
             >
               <option value="">All</option>
               <option value="New App">New App</option>
               <option value="Pre-approval">Pre-approval</option>
             </select>
           </label>
-        </div>
-        <div className="mt-2 flex gap-2">
+          <label className="grid gap-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-black/55">Consultant</span>
+            <select
+              value={consultantFilter}
+              onChange={(e) => setConsultantFilter(e.target.value)}
+              className="h-8 w-[150px] rounded-lg border border-black/10 bg-white px-2 text-[11px] font-bold text-black outline-none focus:border-[#142037]/40 focus:ring-2 focus:ring-[#142037]/10"
+            >
+              <option value="">All</option>
+              {pipelineConsultantOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
-            onClick={() => { setFromDate(""); setToDate(""); setTypeFilter(""); }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-[10px] font-extrabold text-black hover:border-black/20"
+            onClick={() => {
+              setQuery("");
+              setFromDate("");
+              setToDate("");
+              setTypeFilter("");
+              setConsultantFilter("");
+            }}
+            className="h-8 rounded-lg border border-black/10 bg-white px-3 text-[10px] font-extrabold uppercase tracking-[0.08em] text-black hover:border-black/25 hover:bg-black/[0.02]"
           >
             Clear
           </button>
-          <div className="text-[10px] font-semibold text-black/50">
+          <div className="flex h-8 items-center rounded-lg bg-[#142037]/5 px-3 text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#142037]/70">
             Showing {filteredRows.length} lead(s)
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <button
+          type="button"
+          aria-expanded={followUpsOpen}
+          onClick={() => setFollowUpsOpen((prev) => !prev)}
+          className="flex w-full flex-wrap items-center justify-between gap-3 bg-[#142037] px-5 py-4 text-left text-white hover:bg-[#1b2b4b]"
+        >
           <div>
-            <div className="text-[11px] font-extrabold text-black/60">Follow-ups due (all pending)</div>
-            <div className="mt-1 text-xs font-semibold text-black/60">
+            <div className="text-sm font-bold uppercase tracking-[0.14em]">Follow-ups due (all pending)</div>
+            <div className="mt-1 text-xs font-semibold text-white/70">
               {followUpRows.length ? `${followUpRows.length} lead(s) need follow-up.` : "No pending follow-ups."}
             </div>
           </div>
-        </div>
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/25 text-xs font-extrabold text-white">
+            {followUpsOpen ? "^" : "v"}
+          </span>
+        </button>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-black/10">
-          <table className="w-full text-left">
-            <thead className="bg-black/[0.02]">
-              <tr className="text-[10px] font-extrabold text-black">
-                <th className="px-4 py-3">Client</th>
-                <th className="px-4 py-3">Consultant</th>
-                <th className="px-4 py-3">Due Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {followUpRows.length === 0 ? (
-                <tr className="border-t border-black/10">
-                  <td className="px-4 py-4 text-xs font-semibold text-black/60" colSpan={3}>
-                    No pending follow-ups.
-                  </td>
-                </tr>
-              ) : (
-                followUpRows.map((r, idx) => (
-                  <tr key={r.id ?? `${r.client_name}-${idx}`} className="border-t border-black/10 hover:bg-black/[0.02]">
-                    <td className="px-4 py-3 text-xs font-semibold text-black">{r.client_name || "-"}</td>
-                    <td className="px-4 py-3 text-xs font-semibold text-black">{r.consultant || "-"}</td>
-                    <td className="px-4 py-3 text-xs font-extrabold text-black">{dateLabel(r.follow_up_date)}</td>
+        {followUpsOpen ? (
+          <div className="overflow-hidden border-t border-black/80 bg-white">
+            <div className="max-h-[280px] overflow-auto">
+              <table className="w-full min-w-[980px] border-collapse text-left">
+                <colgroup>
+                  <col className="w-[240px]" />
+                  <col className="w-[150px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[330px]" />
+                  <col className="w-[130px]" />
+                </colgroup>
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[#f3f3f3] text-[11px] font-bold text-black">
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Client")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Consultant")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Due Date")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Notes")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3] text-center")}>Actions</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {followUpRows.length === 0 ? (
+                    <tr>
+                      <td className={pipelineCellBase("text-center font-semibold text-black/50")} colSpan={5}>
+                        No pending follow-ups.
+                      </td>
+                    </tr>
+                  ) : (
+                    followUpRows.map((r, idx) => (
+                      <tr key={r.id ?? `${r.client_name}-${idx}`} className="bg-white hover:bg-[#fffce8]">
+                        <td className={pipelineCellBase("font-semibold text-black")}>{r.client_name || "-"}</td>
+                        <td className={pipelineCellBase("font-semibold text-black")}>{r.consultant || "-"}</td>
+                        <td className={pipelineCellBase("whitespace-nowrap font-bold text-black")}>{dateLabel(r.follow_up_date)}</td>
+                        <td className={pipelineCellBase("whitespace-pre-wrap text-black")}>{r.notes || ""}</td>
+                        <td className={pipelineCellBase("text-center")}>
+                          <div className="flex flex-wrap justify-center gap-1">
+                            <button
+                              type="button"
+                              className="min-h-[22px] border border-black/40 bg-white px-2 text-[10px] font-bold uppercase text-black hover:bg-black/[0.06]"
+                              onClick={() => setViewLead(r)}
+                            >
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              className="min-h-[22px] border border-black/40 bg-white px-2 text-[10px] font-bold uppercase text-black hover:bg-black/[0.06]"
+                              onClick={() => openEditFollowUp(r)}
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {showForm ? (
@@ -591,81 +1070,257 @@ export default function PipelinePage() {
         </div>
       ) : null}
 
-      <div className="border-t border-black/10 bg-transparent">
-        <div className="bg-[#142037] px-5 py-4 text-sm font-bold uppercase tracking-[0.14em] text-white">
-          Pipeline Deals
+      <div className="overflow-hidden rounded-2xl border border-black/10 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#142037] px-5 py-4 text-white">
+          <button
+            type="button"
+            aria-expanded={pipelineDealsOpen}
+            onClick={() => setPipelineDealsOpen((prev) => !prev)}
+            className="min-w-[220px] flex-1 text-left"
+          >
+            <div className="text-sm font-bold uppercase tracking-[0.14em]">Pipeline Deals</div>
+            <div className="mt-1 text-xs font-semibold text-white/70">
+              {filteredRows.length} lead{filteredRows.length === 1 ? "" : "s"} shown · Autosave enabled
+            </div>
+          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => exportRowsToExcel("pipeline-deals", "Pipeline Deals", PIPELINE_EXPORT_HEADERS, pipelineExportRows)}
+              className="h-8 border border-white/25 bg-white/10 px-3 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white hover:bg-white/15"
+            >
+              Export Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => exportRowsToPdf("Pipeline Deals", PIPELINE_EXPORT_HEADERS, pipelineExportRows)}
+              className="h-8 border border-white/25 bg-white/10 px-3 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white hover:bg-white/15"
+            >
+              Export PDF
+            </button>
+            <button
+              type="button"
+              aria-label={pipelineDealsOpen ? "Collapse pipeline deals" : "Expand pipeline deals"}
+              onClick={() => setPipelineDealsOpen((prev) => !prev)}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/25 text-xs font-extrabold text-white hover:bg-white/10"
+            >
+              {pipelineDealsOpen ? "^" : "v"}
+            </button>
+          </div>
         </div>
-        <div>
-          <table className="w-full table-fixed text-left">
-            <colgroup>
-              <col className="w-[10%]" />
-              <col className="w-[12%]" />
-              <col className="w-[10%]" />
-              <col className="w-[14%]" />
-              <col className="w-[30%]" />
-              <col className="w-[24%]" />
-            </colgroup>
-            <thead className="border-b border-black/10 bg-white">
-              <tr className="text-xs font-extrabold text-black/70">
-                <th className="px-4 py-4">Lead Date</th>
-                <th className="px-4 py-4">Lead Type</th>
-                <th className="px-4 py-4">Consultant</th>
-                <th className="px-4 py-4">Client Name</th>
-                <th className="px-4 py-4">Notes</th>
-                <th className="px-4 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/10">
-              {filteredRows.map((r, i) => (
-                <tr key={i} className="hover:bg-black/[0.02]">
-                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{dateLabel(r.lead_date)}</td>
-                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{r.lead_type}</td>
-                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black">{r.consultant}</td>
-                  <td className="px-4 py-5 align-top text-[13px] font-semibold text-black break-words">{r.client_name}</td>
-                  <td className="px-4 py-5 align-top text-[11px] font-medium leading-5 text-black whitespace-pre-wrap break-words">{r.notes}</td>
-                  <td className="px-3 py-5 align-top">
-                    <div className="flex flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
-                      <select
-                        disabled={!r.id || statusSavingId === r.id}
-                        value={r.lead_type || ""}
-                        onChange={(e) => {
-                          if (!r.id) return;
-                          updateLeadStatus(r.id, e.target.value);
-                        }}
-                        className="min-w-[104px] rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20 disabled:opacity-60"
-                      >
-                        <option value="">Set status</option>
-                        <option value="New App">New App</option>
-                        <option value="Pre-approval">Pre-approval</option>
-                      </select>
-                      <button
-                        className="rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20"
-                        onClick={() => setViewLead(r)}
-                      >
-                        View
-                      </button>
-                      <button
-                        className="rounded-2xl bg-black px-2.5 py-1.5 text-[10px] font-extrabold text-white hover:opacity-90"
-                        onClick={() => openMove(r)}
-                      >
-                        Move to Submitted
-                      </button>
-                      <button
-                        className="rounded-2xl border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-black hover:border-black/20"
-                        onClick={() => openEditFollowUp(r)}
-                      >
-                        Edit Follow-up
-                      </button>
-                    </div>
-                    {statusErr && statusSavingId === null ? (
-                      <div className="mt-2 text-[10px] font-semibold text-red-600">{statusErr}</div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {pipelineDealsOpen ? (
+          <div className="overflow-hidden border-t border-black/80 bg-white">
+            <div
+              ref={pipelineScrollerRef}
+              tabIndex={0}
+              aria-label="Pipeline deals spreadsheet"
+              onKeyDown={handlePipelineGridKeyDown}
+              className="max-h-[calc(100vh-285px)] overflow-auto outline-none focus:ring-2 focus:ring-[#142037]/30"
+            >
+              <table className="w-full min-w-[2200px] border-collapse text-left">
+                <colgroup>
+                  <col className="w-[110px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[170px]" />
+                  <col className="w-[150px]" />
+                  <col className="w-[230px]" />
+                  <col className="w-[230px]" />
+                  <col className="w-[150px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[130px]" />
+                  <col className="w-[350px]" />
+                  <col className="w-[250px]" />
+                </colgroup>
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[#f3f3f3] text-[11px] font-bold text-black">
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Lead Date")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Lead Type")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Consultant")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Agent")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Lead Source")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Client Name")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Client Email")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Cellphone")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3] text-right")}>{filterLabel("Loan Amount")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3] text-right")}>{filterLabel("Bond Amount")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3] text-right")}>{filterLabel("Purchase Price")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Follow Up")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3]")}>{filterLabel("Notes")}</th>
+                    <th className={pipelineCellBase("bg-[#f3f3f3] text-center")}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.length === 0 ? (
+                    <tr>
+                      <td className={pipelineCellBase("text-center font-semibold text-black/50")} colSpan={14}>
+                        No pipeline deals found.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRows.map((r, i) => {
+                      const rowId = cleanText(r.id);
+                      const rowKey = rowId || `${r.client_name}-${i}`;
+                      const leadTypeOptions = optionsWithCurrent(
+                        PIPELINE_FIELD_OPTIONS.lead_type || [],
+                        pipelineEditableValue(r, "lead_type")
+                      ).map((value) => ({ value, label: value || "Select" }));
+                      const leadSourceOptions = optionsWithCurrent(
+                        PIPELINE_FIELD_OPTIONS.lead_source || [],
+                        pipelineEditableValue(r, "lead_source")
+                      ).map((value) => ({ value, label: value || "Select" }));
+                      const consultantSelectOptions = optionsWithCurrent(
+                        ["", ...consultantOptions],
+                        pipelineEditableValue(r, "consultant")
+                      ).map((value) => ({ value, label: value || "Select" }));
+
+                      return (
+                        <tr key={rowKey} className="bg-white hover:bg-[#fffce8]">
+                          <td className={pipelineCellBase("whitespace-nowrap text-black")}>
+                            <EditableInput
+                              type="date"
+                              value={pipelineEditableValue(r, "lead_date")}
+                              state={saveStates[pipelineCellKey(rowId, "lead_date")]}
+                              onChange={(value) => updatePipelineCell(r, "lead_date", value)}
+                              onCommit={() => updatePipelineCell(r, "lead_date", pipelineEditableValue(r, "lead_date"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableSelect
+                              value={pipelineEditableValue(r, "lead_type")}
+                              state={saveStates[pipelineCellKey(rowId, "lead_type")]}
+                              onChange={(value) => updatePipelineCell(r, "lead_type", value, true)}
+                              options={leadTypeOptions}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableSelect
+                              value={pipelineEditableValue(r, "consultant")}
+                              state={saveStates[pipelineCellKey(rowId, "consultant")]}
+                              onChange={(value) => updatePipelineCell(r, "consultant", value, true)}
+                              options={consultantSelectOptions}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "agent")}
+                              state={saveStates[pipelineCellKey(rowId, "agent")]}
+                              onChange={(value) => updatePipelineCell(r, "agent", value)}
+                              onCommit={() => updatePipelineCell(r, "agent", pipelineEditableValue(r, "agent"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableSelect
+                              value={pipelineEditableValue(r, "lead_source")}
+                              state={saveStates[pipelineCellKey(rowId, "lead_source")]}
+                              onChange={(value) => updatePipelineCell(r, "lead_source", value, true)}
+                              options={leadSourceOptions}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "client_name")}
+                              state={saveStates[pipelineCellKey(rowId, "client_name")]}
+                              onChange={(value) => updatePipelineCell(r, "client_name", value)}
+                              onCommit={() => updatePipelineCell(r, "client_name", pipelineEditableValue(r, "client_name"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "client_email")}
+                              state={saveStates[pipelineCellKey(rowId, "client_email")]}
+                              onChange={(value) => updatePipelineCell(r, "client_email", value)}
+                              onCommit={() => updatePipelineCell(r, "client_email", pipelineEditableValue(r, "client_email"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "client_cellphone")}
+                              state={saveStates[pipelineCellKey(rowId, "client_cellphone")]}
+                              onChange={(value) => updatePipelineCell(r, "client_cellphone", value)}
+                              onCommit={() => updatePipelineCell(r, "client_cellphone", pipelineEditableValue(r, "client_cellphone"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("whitespace-nowrap text-right text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "loan_amount")}
+                              state={saveStates[pipelineCellKey(rowId, "loan_amount")]}
+                              onChange={(value) => updatePipelineCell(r, "loan_amount", value)}
+                              onCommit={() => updatePipelineCell(r, "loan_amount", pipelineEditableValue(r, "loan_amount"), true)}
+                              className="text-right"
+                            />
+                          </td>
+                          <td className={pipelineCellBase("whitespace-nowrap text-right text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "bond_amount")}
+                              state={saveStates[pipelineCellKey(rowId, "bond_amount")]}
+                              onChange={(value) => updatePipelineCell(r, "bond_amount", value)}
+                              onCommit={() => updatePipelineCell(r, "bond_amount", pipelineEditableValue(r, "bond_amount"), true)}
+                              className="text-right"
+                            />
+                          </td>
+                          <td className={pipelineCellBase("whitespace-nowrap text-right text-black")}>
+                            <EditableInput
+                              value={pipelineEditableValue(r, "purchase_price")}
+                              state={saveStates[pipelineCellKey(rowId, "purchase_price")]}
+                              onChange={(value) => updatePipelineCell(r, "purchase_price", value)}
+                              onCommit={() => updatePipelineCell(r, "purchase_price", pipelineEditableValue(r, "purchase_price"), true)}
+                              className="text-right"
+                            />
+                          </td>
+                          <td className={pipelineCellBase("whitespace-nowrap text-black")}>
+                            <EditableInput
+                              type="date"
+                              value={pipelineEditableValue(r, "follow_up_date")}
+                              state={saveStates[pipelineCellKey(rowId, "follow_up_date")]}
+                              onChange={(value) => updatePipelineCell(r, "follow_up_date", value)}
+                              onCommit={() => updatePipelineCell(r, "follow_up_date", pipelineEditableValue(r, "follow_up_date"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("whitespace-pre-wrap text-black")}>
+                            <EditableTextarea
+                              value={pipelineEditableValue(r, "notes")}
+                              state={saveStates[pipelineCellKey(rowId, "notes")]}
+                              onChange={(value) => updatePipelineCell(r, "notes", value)}
+                              onCommit={() => updatePipelineCell(r, "notes", pipelineEditableValue(r, "notes"), true)}
+                            />
+                          </td>
+                          <td className={pipelineCellBase("text-center")}>
+                            <div className="flex flex-wrap justify-center gap-1">
+                              <button
+                                type="button"
+                                className="min-h-[22px] border border-black/40 bg-white px-2 text-[10px] font-bold uppercase text-black hover:bg-black/[0.06]"
+                                onClick={() => setViewLead(r)}
+                              >
+                                View
+                              </button>
+                              <button
+                                type="button"
+                                className="min-h-[22px] bg-black px-2 text-[10px] font-bold uppercase text-white hover:opacity-90"
+                                onClick={() => openMove(r)}
+                              >
+                                Move
+                              </button>
+                              <button
+                                type="button"
+                                className="min-h-[22px] border border-black/40 bg-white px-2 text-[10px] font-bold uppercase text-black hover:bg-black/[0.06]"
+                                onClick={() => openEditFollowUp(r)}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {viewLead ? (

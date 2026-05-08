@@ -54,21 +54,6 @@ export async function GET(req: Request) {
       .order("moved_at", { ascending: false })
       .limit(limit);
 
-    if (String(session.role || "").toLowerCase() !== "admin") {
-      const ownDeals = await supabase
-        .from("deals")
-        .select("id")
-        .ilike("consultant", String(session.name || "").trim());
-      if (ownDeals.error) {
-        return json({ api_build: API_BUILD, ok: false, error: ownDeals.error.message }, 500);
-      }
-      const ids = (ownDeals.data ?? []).map((d: any) => d?.id).filter(Boolean);
-      if (ids.length === 0) {
-        return json({ api_build: API_BUILD, ok: true, items: [], activity: [], moves: [], rows: [], count: 0 }, 200);
-      }
-      query = query.in("deal_id", ids);
-    }
-
     if (q) {
       const like = `%${q}%`;
       query = query.or(

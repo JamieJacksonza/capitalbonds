@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -42,3 +43,15 @@ next-env.d.ts
 .env*.local
 
 .vercel
+
+# local snapshots / accidental nested copies
+capitalbonds-main/
+.contrast-backup-*/
+.rollback_snapshot_*/
+_bak/
+_backups/
+_rollback_snapshots/
+_disabled_routes_*/
+PASTE_TOP_MATCH_PATH_HERE
+_MOVE_DEBUG_DUMP.txt
+_deal_*.json

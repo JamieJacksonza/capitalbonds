@@ -50,6 +50,44 @@ function canAccessDeal(session: any, deal: any) {
   return !!owner && !!who && owner === who;
 }
 
+function missingColumnFromError(error: any) {
+  const msg = String(error?.message || "");
+  return (
+    msg.match(/column "([^"]+)"/i)?.[1] ||
+    msg.match(/Could not find the '([^']+)' column/i)?.[1] ||
+    msg.match(/column ([a-zA-Z0-9_]+) of relation/i)?.[1] ||
+    null
+  );
+}
+
+async function updateDealWithColumnFallback(sb: any, dealId: string, update: Record<string, any>) {
+  let next = { ...update };
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const keys = Object.keys(next);
+    if (!keys.length) {
+      return fromTable(sb, "deals").select("*").eq("id", dealId).single();
+    }
+
+    const res = await fromTable(sb, "deals")
+      .update(next)
+      .eq("id", dealId)
+      .select("*")
+      .single();
+
+    if (!res.error) return res;
+
+    const missingColumn = missingColumnFromError(res.error);
+    if (!missingColumn || !(missingColumn in next)) return res;
+
+    console.warn("DEALS_PATCH_SKIPPED_MISSING_COLUMN:", missingColumn);
+    const { [missingColumn]: _skipped, ...rest } = next;
+    next = rest;
+  }
+
+  return fromTable(sb, "deals").select("*").eq("id", dealId).single();
+}
+
 async function sendInsuranceWebhook(deal: any, meta: { movedBy?: any; note?: any; stageData?: any }) {
   const url = process.env.MAKE_INSURANCE_WEBHOOK_URL;
   if (!url) return;
@@ -67,6 +105,32 @@ async function sendInsuranceWebhook(deal: any, meta: { movedBy?: any; note?: any
     });
   } catch (e) {
     console.error("INSURANCE_WEBHOOK_ERROR:", e);
+  }
+}
+
+async function sendRegistrationsMoveWebhook(
+  deal: any,
+  meta: { movedBy?: any; note?: any; stageData?: any; fromStage?: string; toStage?: string; movedAt?: string }
+) {
+  const url = process.env.MAKE_INSTRUCTED_TO_REGISTRATIONS_WEBHOOK_URL || "";
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "deal_moved_instructed_to_registrations",
+        from_stage: meta?.fromStage ?? null,
+        to_stage: meta?.toStage ?? "registrations",
+        moved_by: meta?.movedBy ?? null,
+        moved_at: meta?.movedAt ?? new Date().toISOString(),
+        note: meta?.note ?? null,
+        stage_data: meta?.stageData ?? null,
+        deal,
+      }),
+    });
+  } catch (e) {
+    console.error("REGISTRATIONS_MOVE_WEBHOOK_ERROR:", e);
   }
 }
 
@@ -160,7 +224,6 @@ export async function GET(req: Request) {
     }
 
     if (!res.data) return json({ ok: false, error: "Deal not found" }, 404);
-    if (!canAccessDeal(session, res.data)) return json({ ok: false, error: "Forbidden" }, 403);
 
     const dealId = String(res.data.id);
 
@@ -224,6 +287,7 @@ export async function PATCH(req: Request) {
   if (!canAccessDeal(session, dealRes.data)) return json({ ok: false, error: "Forbidden" }, 403);
 
   const dealId = String(dealRes.data.id);
+  const fromStage = String((dealRes.data as any)?.stage || "").trim().toLowerCase();
 
   const toStage =
     typeof body?.toStage === "string"
@@ -238,6 +302,20 @@ export async function PATCH(req: Request) {
     (headerUser || (typeof body?.movedBy === "string" ? body.movedBy : null));
   const note = typeof body?.note === "string" ? body.note : null;
 
+  const asNullableString = (value: any) => {
+    const next = String(value ?? "").trim();
+    return next ? next : null;
+  };
+
+  const parseMoney = (value: any) => {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const raw = String(value).replace(/[^\d.-]/g, "");
+    if (!raw) return null;
+    const next = Number(raw);
+    return Number.isFinite(next) ? next : null;
+  };
+
   const update: Record<string, any> = {};
   if (toStage) update.stage = toStage;
 
@@ -246,6 +324,48 @@ export async function PATCH(req: Request) {
   if (movedBy && movedBy.trim()) {
     update.last_moved_by = movedBy.trim();
     update.last_moved_at = new Date().toISOString();
+  }
+
+  const submittedDateRaw = body?.submitted_date ?? body?.submittedDate;
+  if (submittedDateRaw !== undefined) {
+    const v = String(submittedDateRaw || "").trim();
+    update.submitted_date = v ? v.slice(0, 10) : null;
+  }
+
+  const consultantRaw = body?.consultant ?? body?.consultant_name ?? body?.consultantName;
+  if (consultantRaw !== undefined) {
+    update.consultant = asNullableString(consultantRaw);
+  }
+
+  const agentRaw = body?.agent ?? body?.agent_name ?? body?.agentName;
+  if (agentRaw !== undefined) {
+    const v = asNullableString(agentRaw);
+    update.agent = v;
+    update.agent_name = v;
+  }
+
+  const dealRefRaw = body?.deal_ref ?? body?.dealRef ?? body?.deal_code ?? body?.dealCode ?? body?.deal_deck_id ?? body?.dealDeckId;
+  if (dealRefRaw !== undefined) {
+    const v = asNullableString(dealRefRaw);
+    update.deal_code = v;
+    update.deal_deck_id = v;
+  }
+
+  const clientNameRaw = body?.client_name ?? body?.clientName ?? body?.applicant ?? body?.applicant_name ?? body?.applicantName;
+  if (clientNameRaw !== undefined) {
+    const v = asNullableString(clientNameRaw);
+    update.applicant = v;
+    update.client_name = v;
+  }
+
+  const purchasePriceRaw = body?.purchase_price ?? body?.purchasePrice;
+  if (purchasePriceRaw !== undefined) {
+    update.purchase_price = parseMoney(purchasePriceRaw);
+  }
+
+  const amountRaw = body?.amount_zar ?? body?.amountZar ?? body?.amount ?? body?.loan_amount ?? body?.loanAmount;
+  if (amountRaw !== undefined) {
+    update.amount_zar = parseMoney(amountRaw);
   }
 
   const attorneyRaw = body?.attorney ?? body?.attorney_name ?? body?.attorneyName;
@@ -394,11 +514,7 @@ export async function PATCH(req: Request) {
     else if (typeof regStatusesRaw === "string") update.registration_statuses = regStatusesRaw;
   }
 
-  const res = await fromTable(supabase, "deals")
-    .update(update)
-    .eq("id", dealId)
-    .select("*")
-    .single();
+  const res = await updateDealWithColumnFallback(supabase, dealId, update);
 
   if (res.error) {
     console.error("DEALS_PATCH_ERROR:", res.error);
@@ -407,6 +523,17 @@ export async function PATCH(req: Request) {
 
   if (toStage && String(toStage).toLowerCase() === "instructed") {
     await sendInsuranceWebhook(res.data, { movedBy, note, stageData: body?.stageData ?? body?.stage_data ?? null });
+  }
+
+  if (toStage && String(toStage).toLowerCase() === "registrations" && fromStage !== "registrations") {
+    await sendRegistrationsMoveWebhook(res.data, {
+      movedBy,
+      note,
+      stageData: body?.stageData ?? body?.stage_data ?? null,
+      fromStage,
+      toStage: "registrations",
+      movedAt: new Date().toISOString(),
+    });
   }
 
   return json({ ok: true, deal: res.data });

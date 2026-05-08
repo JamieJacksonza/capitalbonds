@@ -241,13 +241,13 @@ async function handle(req: NextRequest) {
     note: typeof note === "string" && note.trim() ? note.trim() : null,
   });
 
-  if (toStage === "instructed" || (fromStage === "instructed" && toStage === "registrations")) {
+  if (toStage === "instructed" || toStage === "registrations") {
     const { data: dealRow } = await supabase.from("deals").select("*").eq("id", dealId).single();
     if (dealRow) {
       if (toStage === "instructed") {
         await sendInsuranceWebhook(dealRow, { movedBy, note, stageData });
       }
-      if (fromStage === "instructed" && toStage === "registrations") {
+      if (toStage === "registrations" && fromStage !== "registrations") {
         await sendInstructedToRegistrationsWebhook(dealRow, {
           movedBy,
           note,
