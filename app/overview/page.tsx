@@ -816,7 +816,9 @@ export default function OverviewPage() {
   const totalShown = filteredDeals.reduce((sum, deal) => sum + pickLoanAmountValue(deal), 0);
   const colCount = 14;
 
-  const overviewExportRows = filteredDeals.map((deal) => [
+  const overviewExportDeals = groupedDeals.flatMap((group) => group.rows);
+
+  const overviewExportRows = overviewExportDeals.map((deal) => [
     stageExportLabel(deal?.stage),
     editableValue(deal, "submitted_date"),
     editableValue(deal, "consultant"),
