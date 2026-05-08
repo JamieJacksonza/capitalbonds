@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="min-h-screen bg-white text-slate-900">
         <AppTopBar />
-        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</main>
+        <main className="app-shell-main mx-auto w-full max-w-[1600px] px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</main>
       </body>
     </html>
   );

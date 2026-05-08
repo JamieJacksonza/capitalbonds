@@ -186,3 +186,228 @@ thead tr th {
   border-color: var(--border-strong) !important;
 }
 
+.pdf-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 10px;
+  }
+
+  body::before,
+  .app-topbar,
+  .pdf-no-print,
+  .dashboard-web-logo {
+    display: none !important;
+  }
+
+  .pdf-only {
+    display: block !important;
+  }
+
+  .app-shell-main {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .dashboard-pdf-root,
+  .dashboard-pdf-page {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  .dashboard-pdf-header {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    border: 1px solid #d8e1ee;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #ffffff 0%, #f4f7fb 100%);
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .dashboard-pdf-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .dashboard-pdf-logo {
+    width: 142px;
+    height: 72px;
+    object-fit: contain;
+  }
+
+  .dashboard-pdf-kicker {
+    margin-bottom: 3px;
+    color: #617086;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .dashboard-pdf-header h1 {
+    margin: 0;
+    color: #142037;
+    font-size: 20px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .dashboard-pdf-header p {
+    margin: 5px 0 0;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .dashboard-pdf-meta {
+    display: grid;
+    min-width: 390px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .dashboard-pdf-meta div {
+    border: 1px solid #d8e1ee;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 8px 9px;
+  }
+
+  .dashboard-pdf-meta span {
+    display: block;
+    color: #64748b;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .dashboard-pdf-meta strong {
+    display: block;
+    margin-top: 3px;
+    color: #142037;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+
+  .dashboard-pdf-section {
+    margin-top: 10px !important;
+    margin-bottom: 10px !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .dashboard-pdf-page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .dashboard-pdf-page .mb-8,
+  .dashboard-pdf-page .mb-10,
+  .dashboard-pdf-page .mt-8,
+  .dashboard-pdf-page .mt-10 {
+    margin-top: 10px !important;
+    margin-bottom: 10px !important;
+  }
+
+  .dashboard-pdf-page .grid {
+    gap: 10px !important;
+  }
+
+  .dashboard-pdf-page [class*="rounded-2xl"],
+  .dashboard-pdf-page [class*="rounded-[24px]"],
+  .dashboard-pdf-page [class*="rounded-[28px]"] {
+    border-radius: 12px !important;
+  }
+
+  .dashboard-pdf-page [class*="shadow"] {
+    box-shadow: none !important;
+  }
+
+  .dashboard-pdf-page [class*="bg-white"] {
+    background-color: #ffffff !important;
+  }
+
+  .dashboard-pdf-page [class*="border-black/10"],
+  .dashboard-pdf-page [class*="border-slate-200"] {
+    border-color: #d8e1ee !important;
+  }
+
+  .dashboard-pdf-page [class*="p-8"] {
+    padding: 16px !important;
+  }
+
+  .dashboard-pdf-page [class*="p-6"],
+  .dashboard-pdf-page [class*="p-5"] {
+    padding: 12px !important;
+  }
+
+  .dashboard-pdf-page [class*="p-4"] {
+    padding: 10px !important;
+  }
+
+  .dashboard-pdf-page table,
+  .dashboard-pdf-page thead,
+  .dashboard-pdf-page tbody,
+  .dashboard-pdf-page tr,
+  .dashboard-pdf-page td,
+  .dashboard-pdf-page th {
+    page-break-inside: avoid;
+  }
+
+  .dashboard-pdf-page table {
+    width: 100% !important;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .dashboard-pdf-page th,
+  .dashboard-pdf-page td {
+    padding: 6px 8px !important;
+    font-size: 9px !important;
+  }
+
+  .dashboard-pdf-page .recharts-wrapper,
+  .dashboard-pdf-page .recharts-surface {
+    overflow: visible !important;
+  }
+
+  .dashboard-pdf-page .recharts-wrapper,
+  .dashboard-pdf-page .recharts-responsive-container {
+    max-height: 205px !important;
+  }
+
+  .dashboard-pdf-page a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+}
+

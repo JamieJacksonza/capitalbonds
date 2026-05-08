@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+const PUBLIC_FILE = /\.(?:avif|gif|ico|jpg|jpeg|png|svg|webp)$/i;
+
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get("cb_session")?.value;
@@ -10,7 +12,8 @@ export function proxy(req: NextRequest) {
     pathname.startsWith("/api/webhooks") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname.startsWith("/public");
+    pathname.startsWith("/public") ||
+    PUBLIC_FILE.test(pathname);
 
   if (isPublic) return NextResponse.next();
 

@@ -86,6 +86,23 @@ function inRange(dt: Date | null, from: string, to: string) {
   return true;
 }
 
+function reportDateLabel(from: string, to: string) {
+  if (from && to) return `${from} to ${to}`;
+  if (from) return `From ${from}`;
+  if (to) return `Until ${to}`;
+  return "All submitted dates";
+}
+
+function reportTimestamp() {
+  return new Intl.DateTimeFormat("en-ZA", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date());
+}
+
 /**
  * Color-blind-friendly (your request):
  * Red, Yellow, Black, Blue (repeat)
@@ -399,6 +416,7 @@ export default function HomeDashboard() {
 
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
+  const generatedAt = useMemo(() => reportTimestamp(), []);
 
   const filteredDeals = useMemo(() => {
     const list = Array.isArray(deals) ? deals : [];
@@ -413,6 +431,11 @@ export default function HomeDashboard() {
       return { stage: s, label: stageLabel(s), count: list.length, total };
     });
   }, [filteredDeals]);
+
+  const dashboardTotal = useMemo(
+    () => filteredDeals.reduce((sum: number, d: any) => sum + dealAmount(d), 0),
+    [filteredDeals]
+  );
 
   const consultantScores = useMemo(() => computeConsultantScores(filteredDeals), [filteredDeals]);
 
@@ -431,15 +454,71 @@ export default function HomeDashboard() {
     return { loanTotal, purchaseTotal, count: list.length, loanPct, purchasePct };
   }, [filteredDeals]);
 
+  function exportDashboardPdf() {
+    const previousTitle = document.title;
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    document.title = `Capital Bonds Dashboard Report ${dateStamp}`;
+
+    const restoreTitle = () => {
+      document.title = previousTitle;
+      window.removeEventListener("afterprint", restoreTitle);
+    };
+
+    window.addEventListener("afterprint", restoreTitle, { once: true });
+    window.setTimeout(() => {
+      window.print();
+      window.setTimeout(restoreTitle, 1000);
+    }, 100);
+  }
+
   return (
-    <div className="w-full">
-      <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-8 lg:px-10">
-        <div className="mb-10 flex justify-center">
-          <img
+    <div className="dashboard-pdf-root w-full">
+      <div className="dashboard-pdf-page mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-8 lg:px-10">
+        <div className="dashboard-web-logo pdf-no-print mb-10 flex justify-center">
+          <Image
             src="/ccb-crm-banner-logo-333.png"
             alt="Capital Bonds"
+            width={1200}
+            height={420}
+            priority
+            unoptimized
             className="block h-[360px] w-full object-contain"
           />
+        </div>
+
+        <div className="dashboard-pdf-header pdf-only">
+          <div className="dashboard-pdf-brand">
+            <Image
+              src="/ccb-crm-banner-logo-333.png"
+              alt="Capital Bonds"
+              width={280}
+              height={140}
+              priority
+              unoptimized
+              className="dashboard-pdf-logo"
+            />
+            <div>
+              <div className="dashboard-pdf-kicker">Executive Pipeline Report</div>
+              <h1>Capital Bonds Dashboard</h1>
+              <p>{reportDateLabel(from, to)}</p>
+            </div>
+          </div>
+
+          <div className="dashboard-pdf-meta">
+            <div>
+              <span>Generated</span>
+              <strong>{generatedAt}</strong>
+            </div>
+            <div>
+              <span>Deals</span>
+              <strong>{filteredDeals.length}</strong>
+            </div>
+            <div>
+              <span>Total Value</span>
+              <strong>{moneyZar(dashboardTotal)}</strong>
+            </div>
+          </div>
         </div>
 
         {/* Header + small date filter */}
@@ -450,7 +529,7 @@ export default function HomeDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-4">
-            <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
+            <div className="pdf-no-print rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
               <div className="text-[10px] font-extrabold text-black/60">Date filter (submitted)</div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-2 text-[10px] font-bold text-black/60">
@@ -478,6 +557,14 @@ export default function HomeDashboard() {
                   className="rounded-xl bg-[#142037] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-white hover:bg-[#1a2a49]"
                 >
                   Refresh
+                </button>
+
+                <button
+                  type="button"
+                  onClick={exportDashboardPdf}
+                  className="rounded-xl bg-[#142037] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-white hover:bg-[#1a2a49]"
+                >
+                  Export PDF
                 </button>
 
                 <button
@@ -516,7 +603,7 @@ export default function HomeDashboard() {
         ) : null}
 
         {/* Stage cards (longer/wider so totals stay on one line) */}
-        <div className="mb-10">
+        <div className="dashboard-pdf-section mb-10">
           <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.16em] text-[#142037]/55">Deal Breakdown</div>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-2">
             {stageSummary.map((s) => (
@@ -539,7 +626,7 @@ export default function HomeDashboard() {
         </div>
 
         {/* Avg Time to Registration (Days) per Consultant */}
-        <div className="mt-8">
+        <div className="dashboard-pdf-section mt-8">
           <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
             <div className="text-sm font-extrabold text-black">Avg Time to Registration (Days) per Consultant</div>
             <div className="mt-1 text-xs font-semibold text-black/60">
@@ -582,14 +669,16 @@ export default function HomeDashboard() {
         </div>
 
         {/* Consultants - Instructed */}
+<div className="dashboard-pdf-section">
 <ConsultantPipelinePerformance
   title="Instructed Value per Consultant"
   stage="instructed"
   deals={filteredDeals}
 />
+</div>
 
 {/* Consultants - Registrations */}
-<div className="mt-8">
+<div className="dashboard-pdf-section mt-8">
   <ConsultantPipelinePerformance
     title="Registrations Value per Consultant"
     stage="registrations"
@@ -600,7 +689,7 @@ export default function HomeDashboard() {
 {/* Value per Consultant (All Stages) */}
 
 {/* Consultant Performance Score (0-100) */}
-<div className="mt-8">
+<div className="dashboard-pdf-section mt-8">
   <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
@@ -650,7 +739,7 @@ export default function HomeDashboard() {
 </div>
 
 {/* Instructed Totals Pie */}
-<div className="mt-8">
+<div className="dashboard-pdf-section mt-8">
   <div className="rounded-2xl border border-black/10 bg-white p-6 shadow-sm">
     <div className="text-sm font-extrabold text-black">Instructed Totals: Loan vs Purchase</div>
     <div className="mt-1 text-xs font-semibold text-black/60">
@@ -692,7 +781,7 @@ export default function HomeDashboard() {
 </div>
 
 {/* Agent + Attorney tables at bottom */}
-        <div className="mt-10 space-y-8">
+        <div className="dashboard-pdf-section dashboard-pdf-page-break mt-10 space-y-8">
           <AgentSummaryTable dealsOverride={filteredDeals} />
           <AttorneySummaryTable dealsOverride={filteredDeals} />
         </div>

@@ -1,14 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 function cls(...p: Array<string | false | null | undefined>) {
   return p.filter(Boolean).join(" ");
 }
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -51,11 +50,16 @@ export default function LoginPage() {
     <div className="mx-auto flex min-h-[78vh] max-w-5xl items-center justify-center px-4 py-10">
       <div className="grid w-full max-w-4xl gap-6 rounded-[32px] border border-slate-200/80 bg-white p-4 shadow-[0_24px_60px_rgba(15,23,42,0.10)] md:grid-cols-[1.05fr_0.95fr] md:p-5">
         <div className="rounded-[28px] bg-[#142037] px-8 py-10 text-white">
+          <Image
+            src="/capital-bonds-logo-white.png"
+            alt="Capital Bonds"
+            width={640}
+            height={320}
+            priority
+            className="h-auto w-full max-w-[460px] object-contain"
+          />
           <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Capital Bonds</div>
           <h1 className="mt-3 text-4xl font-bold tracking-[-0.04em] text-white">Welcome back</h1>
-          <p className="mt-4 max-w-sm text-sm font-medium leading-6 text-white/72">
-            Access the pipeline, track status changes, and manage submissions from one executive dashboard.
-          </p>
         </div>
 
         <div className="rounded-[28px] border border-slate-200/80 bg-white p-8 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">

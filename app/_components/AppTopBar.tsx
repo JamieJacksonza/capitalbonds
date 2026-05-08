@@ -66,7 +66,7 @@ export default function AppTopBar() {
   }
 
   return (
-    <div className="sticky top-0 z-40 border-b border-[#1b2944] bg-[#142037] shadow-[0_14px_40px_rgba(20,32,55,0.18)]">
+    <div className="app-topbar sticky top-0 z-40 border-b border-[#1b2944] bg-[#142037] shadow-[0_14px_40px_rgba(20,32,55,0.18)]">
       <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 md:px-6 xl:px-8">
         <div className="flex items-center gap-4">
           <Link href="/" className="flex items-center">
