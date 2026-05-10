@@ -6,8 +6,8 @@ export const metadata: Metadata = {
   title: "Capital Bonds Dashboard",
   description: "Internal pipeline dashboard for bond applications.",
   icons: {
-    icon: "/capital-bonds-favicon.png",
-    apple: "/capital-bonds-favicon.png",
+    icon: "/capital-bonds-logo.png",
+    apple: "/capital-bonds-logo.png",
   },
 };
 

@@ -8,9 +8,6 @@ const nav = [
   { name: "Pipeline", href: "/pipeline" },
   { name: "Overview", href: "/overview" },
   { name: "Submitted", href: "/submitted" },
-  { name: "Granted", href: "/granted" },
-  { name: "AIP", href: "/aip" },
-  { name: "Instructed", href: "/instructed" },
   { name: "NTU", href: "/ntu" },
 ];
 
